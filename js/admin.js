@@ -3,7 +3,7 @@ import { CONFIG } from './config.js';
 import { api, DEMO } from './api.js';
 import { qrPayload } from './camera.js';
 import { flagLabel, FLAG_LABELS } from './rules.js';
-import { buildWorkbook, reportTables, reportFileName, lastCompletedDutyDay } from './report.js';
+import { buildWorkbook, reportTables, reportFileName, targetReportDay, sendTimeLabel } from './report.js';
 import { $, $$, esc, ymd, hm, hms, dt, toast, getPosition, mins, downloadText, downloadBlob, csvCell } from './util.js';
 
 const P = {};
@@ -145,9 +145,12 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 P.report = async main => {
   const st = await api.getReportSettings();
   const hours = Array.from({ length: 24 }, (_, h) => [String(h), `${String(h).padStart(2, '0')}:00`]);
-  const def = lastCompletedDutyDay(new Date(), st.day_start_hour);
+  const def = targetReportDay(st);
+  const sh = String(st.day_start_hour).padStart(2, '0');
+  const dis = isAdmin() ? '' : 'disabled';
   main.innerHTML = `<h1>每日巡查日報表</h1>
-    <div class="small">勤務日以每日 ${String(st.day_start_hour).padStart(2, '0')}:00 為分界，例如「10/21 勤務日」涵蓋 10/21 ${String(st.day_start_hour).padStart(2, '0')}:00 至 10/22 ${String(st.day_start_hour).padStart(2, '0')}:00，夜班不會被拆成兩天。</div>
+    <div class="small">${st.day_start_hour === 0 ? '報表以日曆日計算（00:00 至 23:59）。跨過午夜的巡邏會出現在兩天的報表中，每筆定點紀錄只計入發生當天。'
+      : `報表以每日 ${sh}:00 為分界，例如「10/21」涵蓋 10/21 ${sh}:00 至 10/22 ${sh}:00。`}</div>
     <form class="filters" id="f"><label class="f">勤務日<input type="date" id="day" value="${def}" max="${today()}"></label>
       <button class="btn">預覽</button><button type="button" class="btn vest" id="xlsx">下載 Excel</button>
       <button type="button" class="btn ghost" id="send">立即寄送給收件人</button></form>
@@ -155,11 +158,12 @@ P.report = async main => {
     <section class="card stack"><h3>自動寄送設定</h3>
       ${DEMO ? '<div class="banner demo">示範模式沒有寄信伺服器，此處設定可儲存但不會實際寄出。正式上線後，系統每天依設定時間自動寄出 Excel 日報表。</div>' : ''}
       <form id="sf" class="stack">
-        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="s-en" ${st.enabled ? 'checked' : ''} ${isAdmin() ? '' : 'disabled'}> 每天自動寄送前一勤務日的日報表</label>
-        <label class="f">收件人 Email（一行一位，例如隊長、總務處承辦人）<textarea id="s-to" rows="3" ${isAdmin() ? '' : 'disabled'} placeholder="captain@example.com">${esc((st.recipients || []).join('\n'))}</textarea></label>
-        <div class="row"><label class="f">每天寄送時間<select id="s-hr" ${isAdmin() ? '' : 'disabled'}>${opts(hours, String(st.send_hour))}</select></label>
-          <label class="f">勤務日分界時間<select id="s-start" ${isAdmin() ? '' : 'disabled'}>${opts(hours, String(st.day_start_hour))}</select></label></div>
-        <div class="small">寄送時間需晚於勤務日分界時間，才能涵蓋完整一天；建議分界 06:00、寄送 07:00。</div>
+        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="s-en" ${st.enabled ? 'checked' : ''} ${dis}> 每天自動寄送日報表</label>
+        <label class="f">收件人 Email（一行一位，例如隊長、總務處承辦人）<textarea id="s-to" rows="3" ${dis} placeholder="captain@example.com">${esc((st.recipients || []).join('\n'))}</textarea></label>
+        <div class="row"><label class="f">每天寄送時間<input type="time" id="s-time" step="60" value="${sendTimeLabel(st)}" ${dis}></label>
+          <label class="f">報表內容<select id="s-scope" ${dis}>${opts([['today', '寄送當天的紀錄'], ['previous', '前一天的紀錄']], st.report_scope)}</select></label>
+          <label class="f">一天從幾點開始算<select id="s-start" ${dis}>${opts(hours, String(st.day_start_hour))}</select></label></div>
+        <div class="small">建議組合：① 23:59 寄出當天（00:00 起算），當晚即可收到；② 07:00 寄出前一天（06:00 起算），夜班完整收在同一份報表。</div>
         ${isAdmin() ? '<button class="btn vest" style="align-self:flex-start">儲存設定</button>' : '<div class="small">僅管理者可修改設定。</div>'}
       </form></section>
     <section class="stack"><h3>寄送紀錄</h3><div id="runs"></div></section>`;
@@ -206,7 +210,10 @@ P.report = async main => {
     if (bad.length) return toast(`Email 格式不正確：${bad.join('、')}`, 'bad');
     if ($('#s-en').checked && !to.length) return toast('啟用自動寄送前，請至少填寫一位收件人', 'bad');
     try {
-      await api.saveReportSettings({ enabled: $('#s-en').checked, recipients: to, send_hour: +$('#s-hr').value, day_start_hour: +$('#s-start').value });
+      const [hh, mm] = ($('#s-time').value || '23:59').split(':').map(Number);
+      const scope = $('#s-scope').value, start = +$('#s-start').value;
+      if (scope === 'previous' && hh * 60 + mm < start * 60) return toast('寄送「前一天」報表時，寄送時間需晚於一天的起算時間', 'bad');
+      await api.saveReportSettings({ enabled: $('#s-en').checked, recipients: to, send_hour: hh, send_minute: mm, report_scope: scope, day_start_hour: start });
       toast('設定已儲存'); show('report');
     } catch (err) { toast(err.message, 'bad'); }
   };

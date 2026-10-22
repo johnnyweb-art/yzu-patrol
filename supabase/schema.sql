@@ -524,11 +524,15 @@ create table if not exists public.report_settings (
   id int primary key default 1 check (id = 1),
   enabled boolean not null default false,
   recipients text[] not null default '{}',
-  send_hour int not null default 7 check (send_hour between 0 and 23),
-  day_start_hour int not null default 6 check (day_start_hour between 0 and 23),
+  send_hour int not null default 23 check (send_hour between 0 and 23),
+  send_minute int not null default 59 check (send_minute between 0 and 59),
+  day_start_hour int not null default 0 check (day_start_hour between 0 and 23),
+  report_scope text not null default 'today' check (report_scope in ('today','previous')),
   updated_at timestamptz not null default now(),
   updated_by uuid references public.profiles(id)
 );
+alter table public.report_settings add column if not exists send_minute int not null default 59 check (send_minute between 0 and 59);
+alter table public.report_settings add column if not exists report_scope text not null default 'today' check (report_scope in ('today','previous'));
 insert into public.report_settings (id) values (1) on conflict (id) do nothing;
 
 create table if not exists public.report_runs (
@@ -551,4 +555,4 @@ drop policy if exists p_rr_sel on public.report_runs;
 create policy p_rr_sel on public.report_runs for select to authenticated using (is_staff());
 revoke all on public.report_settings, public.report_runs from anon, authenticated;
 grant select on public.report_settings, public.report_runs to authenticated;
-grant update (enabled, recipients, send_hour, day_start_hour, updated_at, updated_by) on public.report_settings to authenticated;
+grant update (enabled, recipients, send_hour, send_minute, day_start_hour, report_scope, updated_at, updated_by) on public.report_settings to authenticated;

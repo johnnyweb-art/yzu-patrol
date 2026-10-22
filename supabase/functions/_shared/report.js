@@ -23,6 +23,37 @@ export function lastCompletedDutyDay(now = new Date(), dayStartHour = 6) {
   return dutyDayOf(new Date(new Date(now).getTime() - 86400000), dayStartHour);
 }
 export const taipeiHour = (now = new Date()) => tp(now).getUTCHours();
+export const taipeiMinutes = (now = new Date()) => { const d = tp(now); return d.getUTCHours() * 60 + d.getUTCMinutes(); };
+
+// 預設：每天 23:59 寄出當天（00:00–23:59）的報表
+export const DEFAULT_REPORT_SETTINGS = { enabled: false, recipients: [], send_hour: 23, send_minute: 59, day_start_hour: 0, report_scope: 'today' };
+const withDefaults = st => ({ ...DEFAULT_REPORT_SETTINGS, ...Object.fromEntries(Object.entries(st || {}).filter(([, v]) => v != null)) });
+// 報表涵蓋哪一天：today＝寄送當天；previous＝前一個已結束的勤務日
+export function targetReportDay(settings, now = new Date()) {
+  const st = withDefaults(settings);
+  return st.report_scope === 'previous' ? lastCompletedDutyDay(now, st.day_start_hour) : dutyDayOf(now, st.day_start_hour);
+}
+export function isSendDue(settings, now = new Date()) {
+  const st = withDefaults(settings);
+  return taipeiMinutes(now) >= st.send_hour * 60 + st.send_minute;
+}
+export const sendTimeLabel = settings => { const st = withDefaults(settings); return `${p2(st.send_hour)}:${p2(st.send_minute)}`; };
+
+// 跨日巡邏：場次與報表期間重疊即列入，定點紀錄只計入期間內的筆數，每筆紀錄只會出現在一份日報表
+export const patrolOverlaps = (p, from, to) => new Date(p.started_at) < to && (!p.ended_at || new Date(p.ended_at) >= from);
+export function applyWindow(patrols, scans, from, to) {
+  const inW = scans.filter(x => { const t = new Date(x.server_at); return t >= from && t < to; });
+  return {
+    scans: inW,
+    patrols: patrols.map(p => {
+      const sc = inW.filter(x => x.patrol_id === p.id);
+      return { ...p, scan_count: sc.length, abnormal_count: sc.filter(x => x.status === 'abnormal').length, flagged_count: sc.filter(x => x.flags?.length).length,
+        cross_day: new Date(p.started_at) < from || (p.ended_at ? new Date(p.ended_at) >= to : false),
+        // 未巡據點在結束巡邏時才填寫，只計入結束當天的報表
+        ended_in_window: !!p.ended_at && new Date(p.ended_at) >= from && new Date(p.ended_at) < to };
+    }),
+  };
+}
 
 const pct = (a, b) => b ? `${(a / b * 100).toFixed(1)}%` : '—';
 
@@ -31,7 +62,7 @@ export function summarize(data) {
   const { patrols, scans, incidents, sos } = data;
   const ended = patrols.filter(p => p.status === 'ended');
   const done = patrols.reduce((a, p) => a + p.scan_count, 0), total = patrols.reduce((a, p) => a + p.point_count, 0);
-  const missed = patrols.reduce((a, p) => a + (p.missed?.length || 0), 0);
+  const missed = patrols.filter(p => p.ended_in_window !== false).reduce((a, p) => a + (p.missed?.length || 0), 0);
   return {
     patrols: patrols.length, ended: ended.length, active: patrols.length - ended.length,
     completion: pct(done, total), done, total, missed,
@@ -63,9 +94,12 @@ export function reportTables(data) {
   ];
   const patrolT = {
     head: ['日期', '工號', '姓名', '班別', '路線', '開始', '結束', '完成據點', '應巡據點', '異常', '未巡據點與原因', '註記', '天候', '交接事項'],
-    rows: patrols.map(p => [fmtDate(p.started_at), p.profile?.staff_no, p.profile?.name, p.shift, p.route_name, fmtTime(p.started_at), p.ended_at ? fmtTime(p.ended_at) : '進行中',
-      p.scan_count, p.point_count, p.abnormal_count, (p.missed || []).map(m => `${checkpointNames[m.checkpoint_id] || ''}：${m.reason}`).join('；'),
-      (p.flags || []).map(flagLabel).join('、'), p.weather, p.handover_note]),
+    rows: patrols.map(p => {
+      const tm = iso => p.cross_day ? fmtDT(iso) : fmtTime(iso);
+      return [fmtDate(p.started_at), p.profile?.staff_no, p.profile?.name, p.shift, p.route_name, tm(p.started_at), p.ended_at ? tm(p.ended_at) : '進行中',
+        p.scan_count, p.point_count, p.abnormal_count, p.ended_in_window === false ? '' : (p.missed || []).map(m => `${checkpointNames[m.checkpoint_id] || ''}：${m.reason}`).join('；'),
+        [...(p.cross_day ? ['跨日巡邏（完成據點只計本日）'] : []), ...(p.flags || []).map(flagLabel)].join('、'), p.weather, p.handover_note];
+    }),
   };
   const scanT = {
     head: ['時間', '工號', '姓名', '據點代碼', '據點名稱', '結果', '異常類別', '嚴重度', '說明', '距離(公尺)', '註記', '覆核', '覆核意見', '照片數'],

@@ -102,7 +102,7 @@ update public.profiles set role = 'admin', name = '管理者姓名' where staff_
 2. Supabase → **Edge Functions → Secrets** 新增：`RESEND_API_KEY`、`REPORT_FROM`（例如 `校園巡邏系統 <patrol@你的網域>`）、`REPORT_CRON_SECRET`（自訂一串亂碼）。
 3. 部署：`supabase functions deploy daily-report --no-verify-jwt`
 4. 編輯 `supabase/cron.sql`，填入專案代碼與 `REPORT_CRON_SECRET`，在 SQL Editor 執行。
-5. 管理後台「每日巡查日報表」→ 填寫收件人、寄送時間，勾選「每天自動寄送」後儲存。可先按「立即寄送給收件人」測試。
+5. 管理後台「每日巡查日報表」→ 填寫收件人、寄送時間（預設每天 23:59 寄出當天紀錄），勾選「每天自動寄送」後儲存。可先按「立即寄送給收件人」測試。
 
 ### 步驟 6：現場建置
 1. 管理者帶手機到每個據點，在「據點管理」按「使用我目前的位置」標定座標。

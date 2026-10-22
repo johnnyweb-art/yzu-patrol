@@ -4,7 +4,7 @@ import { CONFIG } from './config.js';
 import { kv } from './idb.js';
 import { evaluateScan, RuleError } from './rules.js';
 import { uid } from './util.js';
-import { dutyWindow } from './report.js';
+import { dutyWindow, applyWindow, patrolOverlaps, DEFAULT_REPORT_SETTINGS } from './report.js';
 
 const KEY = 'yzup-demo-v1';
 const SESSION = 'yzup-demo-session';
@@ -388,26 +388,26 @@ export const api = {
   // ===== 日報表 =====
   async getReportSettings() {
     needStaff(); const d = load();
-    return d.report_settings || { enabled: false, recipients: [], send_hour: 7, day_start_hour: 6 };
+    return { ...DEFAULT_REPORT_SETTINGS, ...(d.report_settings || {}) };
   },
   async saveReportSettings(patch) {
     const u = needAdmin(), d = load();
-    d.report_settings = { ...(d.report_settings || { enabled: false, recipients: [], send_hour: 7, day_start_hour: 6 }), ...patch, updated_at: nowIso(), updated_by: u.id };
+    d.report_settings = { ...DEFAULT_REPORT_SETTINGS, ...(d.report_settings || {}), ...patch, updated_at: nowIso(), updated_by: u.id };
     save(d);
   },
   async listReportRuns() { needStaff(); return (load().report_runs || []).slice().reverse(); },
   async sendReportNow() { needStaff(); throw new Error('示範模式沒有寄信伺服器。請改用「下載 Excel」；正式上線後即可自動寄送。'); },
   async reportData(day) {
     needStaff(); const d = load();
-    const startHour = (d.report_settings || {}).day_start_hour ?? 6;
+    const startHour = { ...DEFAULT_REPORT_SETTINGS, ...(d.report_settings || {}) }.day_start_hour;
     const { from, to } = dutyWindow(day, startHour);
     const inW = iso => { const t = new Date(iso); return t >= from && t < to; };
-    const patrols = d.patrols.filter(p => inW(p.started_at)).sort((a, b) => a.started_at.localeCompare(b.started_at)).map(p => patrolSummary(d, p));
-    const ids = new Set(patrols.map(p => p.id));
+    const overl = d.patrols.filter(p => patrolOverlaps(p, from, to)).sort((a, b) => a.started_at.localeCompare(b.started_at)).map(p => patrolSummary(d, p));
+    const ids = new Set(overl.map(p => p.id));
+    const w = applyWindow(overl, d.scans.filter(x => ids.has(x.patrol_id)).sort((a, b) => a.server_at.localeCompare(b.server_at))
+      .map(x => ({ ...x, checkpoint: d.checkpoints.find(c => c.id === x.checkpoint_id), profile: pub(d.users.find(u => u.id === x.user_id)) })), from, to);
     return {
-      day, dayStartHour: startHour, patrols,
-      scans: d.scans.filter(x => ids.has(x.patrol_id)).sort((a, b) => a.server_at.localeCompare(b.server_at))
-        .map(x => ({ ...x, checkpoint: d.checkpoints.find(c => c.id === x.checkpoint_id), profile: pub(d.users.find(u => u.id === x.user_id)) })),
+      day, dayStartHour: startHour, patrols: w.patrols, scans: w.scans,
       incidents: d.incidents.filter(i => inW(i.created_at)).map(i => ({ ...i, profile: pub(d.users.find(u => u.id === i.user_id)) })),
       sos: d.sos.filter(x => inW(x.created_at)).map(x => ({ ...x, profile: pub(d.users.find(u => u.id === x.user_id)) })),
       checkpointNames: Object.fromEntries(d.checkpoints.map(c => [c.id, `${c.code} ${c.name}`])),

@@ -2,7 +2,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 import { CONFIG } from './config.js';
 import { uid } from './util.js';
-import { dutyWindow } from './report.js';
+import { dutyWindow, applyWindow, patrolOverlaps, DEFAULT_REPORT_SETTINGS } from './report.js';
 
 const sb = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const CP_COLS = 'id,code,name,type,lat,lng,radius_m,enforce_fence,checklist,min_photos,active,note';
@@ -245,7 +245,7 @@ export const api = {
   },
 
   // ===== 日報表 =====
-  async getReportSettings() { return chk(await sb.from('report_settings').select('*').eq('id', 1).single()); },
+  async getReportSettings() { return { ...DEFAULT_REPORT_SETTINGS, ...chk(await sb.from('report_settings').select('*').eq('id', 1).single()) }; },
   async saveReportSettings(patch) {
     chk(await sb.from('report_settings').update({ ...patch, updated_at: new Date().toISOString(), updated_by: await myId() }).eq('id', 1));
   },
@@ -261,21 +261,22 @@ export const api = {
   },
   async reportData(day) {
     const st = await api.getReportSettings();
-    const startHour = st?.day_start_hour ?? 6;
+    const startHour = st.day_start_hour;
     const { from, to } = dutyWindow(day, startHour);
     const F = from.toISOString(), T = to.toISOString();
     const [patrols, incidents, sos, routes, cps] = await Promise.all([
-      sb.from('patrols').select(`*, scans(status,flags,server_at), ${prof('patrols')}`).gte('started_at', F).lt('started_at', T).order('started_at').then(chk),
+      sb.from('patrols').select(`*, scans(status,flags,server_at), ${prof('patrols')}`).gte('started_at', new Date(from.getTime() - 36 * 3600000).toISOString())
+        .lt('started_at', T).or(`ended_at.is.null,ended_at.gte.${F}`).order('started_at').then(chk),
       sb.from('incidents').select(`*, ${prof('incidents')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
       sb.from('sos_alerts').select(`*, ${prof('sos_alerts')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
       routesWithPoints(false, false),
       sb.from('checkpoints').select('id,code,name').then(chk)]);
     const ids = patrols.map(p => p.id);
-    const scans = ids.length ? chk(await sb.from('scans').select(`*, checkpoint:checkpoints(${CP_COLS}), ${prof('scans')}`).in('patrol_id', ids).order('server_at')) : [];
+    const scans = ids.length ? chk(await sb.from('scans').select(`*, checkpoint:checkpoints(${CP_COLS}), ${prof('scans')}`).in('patrol_id', ids)
+      .gte('server_at', F).lt('server_at', T).order('server_at')) : [];
+    const w = applyWindow(patrols.map(p => summarize(p, routes)), scans.map(x => ({ ...x, profile: x.profiles })), from, to);
     return {
-      day, dayStartHour: startHour,
-      patrols: patrols.map(p => summarize(p, routes)),
-      scans: scans.map(x => ({ ...x, profile: x.profiles })),
+      day, dayStartHour: startHour, patrols: w.patrols, scans: w.scans,
       incidents: incidents.map(i => ({ ...i, profile: i.profiles })),
       sos: sos.map(x => ({ ...x, profile: x.profiles })),
       checkpointNames: Object.fromEntries(cps.map(c => [c.id, `${c.code} ${c.name}`])),

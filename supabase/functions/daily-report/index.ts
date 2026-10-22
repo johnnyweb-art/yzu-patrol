@@ -1,7 +1,7 @@
 // 每日巡查日報表：自動寄送 Excel 給隊長（班長）。
 // 部署：supabase functions deploy daily-report --no-verify-jwt
 // 觸發方式：
-//   1. 排程（supabase/cron.sql）每小時呼叫一次，到了設定的寄送時間才寄出，同一勤務日只寄一次
+//   1. 排程（supabase/cron.sql）每 5 分鐘呼叫一次，到了設定的寄送時間才寄出，同一天只寄一次
 //   2. 管理後台「立即寄送」：由班長或管理者登入後手動觸發
 // 需要的環境變數（Supabase → Edge Functions → Secrets）：
 //   RESEND_API_KEY      寄信服務 Resend 的金鑰
@@ -10,7 +10,7 @@
 //   ORG_NAME            （選填）報表標題的單位名稱，預設「元智大學」
 import ExcelJS from 'npm:exceljs@4.4.0';
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
-import { buildWorkbook, dutyWindow, emailHtml, lastCompletedDutyDay, reportFileName, summarize, taipeiHour } from '../_shared/report.js';
+import { applyWindow, buildWorkbook, DEFAULT_REPORT_SETTINGS, dutyWindow, emailHtml, isSendDue, reportFileName, summarize, targetReportDay } from '../_shared/report.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -28,7 +28,8 @@ export async function loadReportData(db: any, day: string, dayStartHour: number)
   const F = from.toISOString(), T = to.toISOString();
   const chk = (r: { data: unknown; error: { message: string } | null }) => { if (r.error) throw new Error(r.error.message); return r.data as any[]; };
   const [patrols, incidents, sos, routes, cps] = await Promise.all([
-    db.from('patrols').select(`*, ${prof('patrols')}`).gte('started_at', F).lt('started_at', T).order('started_at').then(chk),
+    db.from('patrols').select(`*, ${prof('patrols')}`).gte('started_at', new Date(from.getTime() - 36 * 3600000).toISOString()).lt('started_at', T)
+      .or(`ended_at.is.null,ended_at.gte.${F}`).order('started_at').then(chk),
     db.from('incidents').select(`*, ${prof('incidents')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
     db.from('sos_alerts').select(`*, ${prof('sos_alerts')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
     db.from('routes').select('id,name,route_points(checkpoint_id)').then(chk),
@@ -36,17 +37,16 @@ export async function loadReportData(db: any, day: string, dayStartHour: number)
   ]);
   const ids = patrols.map((p: any) => p.id);
   const scans = ids.length
-    ? chk(await db.from('scans').select(`*, checkpoint:checkpoints(code,name), ${prof('scans')}`).in('patrol_id', ids).order('server_at'))
+    ? chk(await db.from('scans').select(`*, checkpoint:checkpoints(code,name), ${prof('scans')}`).in('patrol_id', ids).gte('server_at', F).lt('server_at', T).order('server_at'))
     : [];
   const rById = Object.fromEntries(routes.map((r: any) => [r.id, r]));
+  const w = applyWindow(
+    patrols.map((p: any) => ({ ...p, profile: p.profiles, route_name: rById[p.route_id]?.name || '', point_count: rById[p.route_id]?.route_points.length || 0 })),
+    scans.map((s: any) => ({ ...s, profile: s.profiles })), from, to);
   return {
     day, dayStartHour,
-    patrols: patrols.map((p: any) => {
-      const sc = scans.filter((s: any) => s.patrol_id === p.id);
-      return { ...p, profile: p.profiles, route_name: rById[p.route_id]?.name || '', point_count: rById[p.route_id]?.route_points.length || 0,
-        scan_count: sc.length, abnormal_count: sc.filter((s: any) => s.status === 'abnormal').length };
-    }),
-    scans: scans.map((s: any) => ({ ...s, profile: s.profiles })),
+    patrols: w.patrols,
+    scans: w.scans,
     incidents: incidents.map((i: any) => ({ ...i, profile: i.profiles })),
     sos: sos.map((s: any) => ({ ...s, profile: s.profiles })),
     checkpointNames: Object.fromEntries(cps.map((c: any) => [c.id, `${c.code} ${c.name}`])),
@@ -80,14 +80,15 @@ Deno.serve(async (req) => {
   let trigger = 'cron', day = '';
   try {
     const body = await req.json().catch(() => ({}));
-    const { data: settings } = await db.from('report_settings').select('*').eq('id', 1).single();
-    const startHour = settings?.day_start_hour ?? 6;
+    const { data: row } = await db.from('report_settings').select('*').eq('id', 1).single();
+    const settings = { ...DEFAULT_REPORT_SETTINGS, ...(row ?? {}) };
+    const startHour = settings.day_start_hour;
 
     const secret = Deno.env.get('REPORT_CRON_SECRET');
     if (secret && req.headers.get('x-cron-secret') === secret) {
-      if (!settings?.enabled) return json({ skipped: '自動寄送未啟用' });
-      if (taipeiHour() !== settings.send_hour) return json({ skipped: '尚未到寄送時間' });
-      day = lastCompletedDutyDay(new Date(), startHour);
+      if (!settings.enabled) return json({ skipped: '自動寄送未啟用' });
+      if (!isSendDue(settings)) return json({ skipped: '尚未到寄送時間' });
+      day = targetReportDay(settings);
       const { data: done } = await db.from('report_runs').select('id').eq('report_day', day).eq('status', 'sent').limit(1);
       if (done?.length) return json({ skipped: '此勤務日已寄送' });
     } else {
@@ -98,10 +99,10 @@ Deno.serve(async (req) => {
       const { data: me } = await db.from('profiles').select('role,active').eq('id', user.id).single();
       if (!me?.active || !['supervisor', 'admin'].includes(me.role)) return json({ error: '權限不足' }, 403);
       trigger = 'manual';
-      day = /^\d{4}-\d{2}-\d{2}$/.test(body.day ?? '') ? body.day : lastCompletedDutyDay(new Date(), startHour);
+      day = /^\d{4}-\d{2}-\d{2}$/.test(body.day ?? '') ? body.day : targetReportDay(settings);
     }
 
-    const recipients: string[] = (body.to?.length && trigger === 'manual') ? body.to : (settings?.recipients ?? []);
+    const recipients: string[] = (body.to?.length && trigger === 'manual') ? body.to : settings.recipients;
     if (!recipients.length) throw new Error('尚未設定收件人');
 
     const data = await loadReportData(db, day, startHour);
