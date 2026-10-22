@@ -84,7 +84,7 @@ async function refreshBadges() {
     badge('dash', d.sos.length);
     badge('scans', d.pendingReview);
     badge('incidents', d.openIncidents.length);
-    badge('people', d.pendingDevices);
+    badge('people', d.pendingDevices + (d.pendingRegistrations || 0));
     badge('selfies', d.pendingSelfies);
     if (d.sos.length > S.counts.sos) { toast(`SOS 緊急求援：${d.sos[0].profile?.name || ''}`, 'bad'); navigator.vibrate?.(300); }
     S.counts.sos = d.sos.length;
@@ -123,11 +123,13 @@ P.dash = async main => {
           : '<p class="empty card">沒有未結案事件。</p>'}
       </section>
     </div>
+    ${d.pendingRegistrations ? `<div class="banner warn"><span>有 ${d.pendingRegistrations} 位巡邏員申請註冊，等待審核</span><button class="btn sm" id="go-reg">前往審核</button></div>` : ''}
     ${d.pendingDevices ? `<div class="banner warn"><span>有 ${d.pendingDevices} 支新手機等待核准</span><button class="btn sm" id="go-dev">前往處理</button></div>` : ''}`;
   $$('[data-ack]').forEach(b => b.onclick = async () => { await api.ackSOS(b.dataset.ack); S.counts.sos--; show('dash'); });
   $$('[data-patrol]').forEach(r => r.onclick = () => patrolDialog(r.dataset.patrol));
   $$('[data-inc]').forEach(r => r.onclick = () => show('incidents'));
   $('#go-dev')?.addEventListener('click', () => show('people'));
+  $('#go-reg')?.addEventListener('click', () => show('people'));
 };
 
 // ---------- 每日巡查日報表 ----------
@@ -575,10 +577,17 @@ P.labels = async main => {
 
 // ---------- 人員與裝置 ----------
 P.people = async main => {
-  const [users, devs] = await Promise.all([api.listProfiles(), api.listDevices()]);
+  const [users, devs, regs] = await Promise.all([api.listProfiles(), api.listDevices(), api.listRegistrations({ status: 'pending' })]);
   people = users;
   const pend = devs.filter(d => d.status === 'pending');
   main.innerHTML = `<h1>人員與裝置</h1>
+    ${regs.length ? `<section class="stack"><h3>待審核註冊申請</h3><div class="tbl"><table><tr><th>工號</th><th>姓名</th><th>類型</th><th>所屬／手機號碼</th><th>裝置</th><th>申請時間</th><th></th></tr>
+      ${regs.map(r => `<tr><td class="mono">${esc(r.staff_no)}</td><td>${esc(r.name)}</td>
+        <td>${r.kind === 'rebind' ? '<span class="chip warn">既有人員重新綁定</span>' : '<span class="chip vest">新人員</span>'}</td>
+        <td>${esc(r.org || '—')}<div class="small mono">${esc(r.phone || '')}</div></td><td>${esc(r.device_label || '')}<div class="small mono">${esc(String(r.device_id).slice(0, 8))}</div></td>
+        <td class="mono">${dt(r.created_at)}</td><td><div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-reg="${r.id}">核准</button>
+        <button class="btn sm ghost" data-rej="${r.id}">退回</button></div></td></tr>`).join('')}</table></div>
+      <div class="small">請確認工號、姓名與本人相符後再核准。核准後，該人員只能用這支手機掃臉登入；「重新綁定」會讓他原本的手機失效。</div></section>` : ''}
     ${pend.length ? `<section class="stack"><h3>待核准手機</h3><div class="tbl"><table><tr><th>人員</th><th>裝置</th><th>申請時間</th><th></th></tr>
       ${pend.map(d => `<tr><td>${esc(d.profile?.staff_no)} ${esc(d.profile?.name)}</td><td>${esc(d.label)}<div class="small mono">${esc(d.device_id.slice(0, 8))}</div></td>
         <td class="mono">${dt(d.created_at)}</td><td><div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-dev="${d.id}" data-s="active">核准（停用舊機）</button>
@@ -600,6 +609,20 @@ P.people = async main => {
     <section class="card stack"><h3>照片保存期限</h3>
       <div class="small">依個資告知，巡查照片保存 ${CONFIG.PHOTO_RETENTION_DAYS} 天。按下按鈕刪除超過期限的照片（文字紀錄保留）。建議每月執行一次。</div>
       <button class="btn ghost" id="purge" style="align-self:flex-start">刪除 ${CONFIG.PHOTO_RETENTION_DAYS} 天前的照片</button></section>` : ''}`;
+  $$('[data-reg]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await api.approveRegistration(b.dataset.reg); toast('已核准，巡邏員可以掃臉登入了'); people = []; show('people'); refreshBadges(); }
+    catch (err) { toast(err.message, 'bad'); b.disabled = false; }
+  });
+  $$('[data-rej]').forEach(b => b.onclick = () => {
+    const r = regs.find(x => x.id === b.dataset.rej);
+    openDialog(`退回 ${r.staff_no} ${r.name} 的申請`, `<form id="rjf" class="stack"><label class="f">退回原因（巡邏員會在手機上看到）
+      <textarea id="rj-why" rows="3" required placeholder="例：工號有誤，請確認後重新申請"></textarea></label><button class="btn bad">確認退回</button></form>`);
+    $('#rjf').onsubmit = async e => {
+      e.preventDefault();
+      try { await api.rejectRegistration(r.id, $('#rj-why').value.trim()); toast('已退回'); dlg.close(); show('people'); refreshBadges(); } catch (err) { toast(err.message, 'bad'); }
+    };
+  });
   $$('[data-dev]').forEach(b => b.onclick = async () => { await api.setDeviceStatus(b.dataset.dev, b.dataset.s); toast('已更新'); show('people'); refreshBadges(); });
   $$('[data-role]').forEach(s => s.onchange = async () => { await api.updateProfile(s.dataset.role, { role: s.value }); toast('角色已更新'); });
   $$('[data-act]').forEach(s => s.onchange = async () => { await api.updateProfile(s.dataset.act, { active: s.value === '1' }); toast('狀態已更新'); });

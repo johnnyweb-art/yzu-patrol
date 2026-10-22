@@ -4,10 +4,12 @@ import { CONFIG } from './config.js';
 import { kv } from './idb.js';
 import { evaluateScan, RuleError } from './rules.js';
 import { uid } from './util.js';
+import * as wa from './webauthn.js';
 import { dutyWindow, applyWindow, patrolOverlaps, DEFAULT_REPORT_SETTINGS } from './report.js';
 
 const KEY = 'yzup-demo-v1';
-const SESSION = 'yzup-demo-session';
+// 巡邏員畫面與管理後台各自登入，在同一個瀏覽器測試兩種角色時不會互相覆蓋
+const SESSION = 'yzup-demo-session-' + (/admin\.html$/.test(location.pathname) ? 'admin' : 'guard');
 const listeners = new Set();
 
 // 據點座標為元智大學附近的示意位置，正式使用時需於管理後台以地圖重新標定
@@ -276,6 +278,7 @@ export const api = {
       pendingReview: d.scans.filter(s => s.review_status === 'pending').length,
       pendingDevices: d.devices.filter(x => x.status === 'pending').length,
       pendingSelfies: d.selfies.filter(x => x.result === 'pending').length,
+      pendingRegistrations: (d.registrations || []).filter(x => x.status === 'pending').length,
       today: { patrols: d.patrols.filter(p => isToday(p.started_at)).length, scans: scansToday.length,
         abnormal: scansToday.filter(s => s.status === 'abnormal').length, flagged: scansToday.filter(s => s.flags.length).length },
     };
@@ -375,6 +378,76 @@ export const api = {
     }
     save(d);
     return n;
+  },
+
+  // ===== 自行註冊與臉部辨識登入（示範模式：簽章只在手機端確認） =====
+  async passkeyRegister({ staff_no, name, phone, org, deviceId, deviceLabel, simulate }) {
+    staff_no = String(staff_no).trim().toUpperCase(); name = String(name).trim();
+    if (!/^[A-Z0-9_-]{2,20}$/.test(staff_no)) throw new Error('工號格式不正確（英文字母或數字，2–20 碼）');
+    if (!name) throw new Error('請填寫姓名');
+    let credentialId;
+    if (simulate) credentialId = 'sim-' + uid();
+    else {
+      try { credentialId = (await wa.startRegistration(wa.localRegOptions({ staff_no, name }))).id; }
+      catch (e) { throw new Error(wa.friendlyError(e)); }
+    }
+    const d = load();
+    d.registrations ||= [];
+    const ex = d.users.find(u => u.staff_no === staff_no);
+    if (ex && !ex.active) throw new Error('此工號已停用，請洽總務處');
+    d.registrations = d.registrations.filter(r => !(r.staff_no === staff_no && r.status === 'pending'));
+    const r = { id: uid(), kind: ex ? 'rebind' : 'new', staff_no, name, phone: phone || '', org: org || '', device_id: deviceId, device_label: deviceLabel,
+      credential_id: credentialId, consent_at: nowIso(), status: 'pending', created_at: nowIso() };
+    d.registrations.push(r); save(d);
+    return { requestId: r.id, credentialId };
+  },
+  async registrationStatus(requestId, deviceId) {
+    const r = (load().registrations || []).find(x => x.id === requestId && x.device_id === deviceId);
+    return r ? { status: r.status, reason: r.reject_reason } : { status: 'missing' };
+  },
+  async passkeyLogin({ credentialId, deviceId, simulate }) {
+    const d = load();
+    const pk = (d.passkeys || []).find(x => x.credential_id === credentialId && x.active);
+    if (!pk) throw new Error('此手機的臉部登入已失效，請重新申請註冊');
+    if (!simulate) {
+      try { await wa.startAuthentication(wa.localAuthOptions(credentialId)); } catch (e) { throw new Error(wa.friendlyError(e)); }
+    }
+    const u = d.users.find(x => x.id === pk.user_id);
+    if (!u?.active) throw new Error('此帳號已停用，請洽總務處');
+    if (pk.device_id !== deviceId) throw new Error('臉部登入只能在註冊時的手機使用');
+    const dev = d.devices.find(x => x.user_id === u.id && x.device_id === deviceId);
+    if (dev?.status !== 'active') throw new Error('此手機未獲授權，請洽班長');
+    dev.last_uv_at = pk.last_used_at = nowIso(); save(d);
+    localStorage.setItem(SESSION, u.id);
+    return pub(u);
+  },
+  async listRegistrations({ status } = {}) {
+    needStaff();
+    return (load().registrations || []).filter(r => !status || r.status === status).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  },
+  async approveRegistration(id) {
+    const s = needStaff(), d = load();
+    const r = (d.registrations || []).find(x => x.id === id);
+    if (!r || r.status !== 'pending') throw new Error('此申請已處理或不存在');
+    let u = d.users.find(x => x.staff_no === r.staff_no);
+    if (!u) { u = { id: 'u-' + uid(), staff_no: r.staff_no, name: r.name, role: 'guard', active: true, password: null }; d.users.push(u); }
+    d.passkeys ||= [];
+    d.passkeys.filter(x => x.user_id === u.id).forEach(x => (x.active = false));
+    d.passkeys.push({ id: uid(), user_id: u.id, device_id: r.device_id, credential_id: r.credential_id, active: true, created_at: nowIso() });
+    d.devices.filter(x => x.user_id === u.id && x.status === 'active').forEach(x => Object.assign(x, { status: 'revoked', decided_by: s.id, decided_at: nowIso() }));
+    const dev = d.devices.find(x => x.user_id === u.id && x.device_id === r.device_id);
+    if (dev) Object.assign(dev, { status: 'active', decided_by: s.id, decided_at: nowIso() });
+    else d.devices.push({ id: uid(), user_id: u.id, device_id: r.device_id, label: r.device_label, status: 'active', created_at: nowIso(), decided_by: s.id, decided_at: nowIso() });
+    Object.assign(r, { status: 'approved', user_id: u.id, decided_by: s.id, decided_at: nowIso() });
+    save(d);
+  },
+  async rejectRegistration(id, reason) {
+    const s = needStaff(), d = load();
+    if (!String(reason || '').trim()) throw new Error('請填寫退回原因');
+    const r = (d.registrations || []).find(x => x.id === id && x.status === 'pending');
+    if (!r) throw new Error('此申請已處理或不存在');
+    Object.assign(r, { status: 'rejected', reject_reason: reason.trim(), decided_by: s.id, decided_at: nowIso() });
+    save(d);
   },
 
   async changePassword(oldPw, newPw) {

@@ -3,12 +3,24 @@ import { CONFIG } from './config.js';
 import { api, DEMO, isNetworkError } from './api.js';
 import * as cam from './camera.js';
 import * as bio from './biometric.js';
+import * as wa from './webauthn.js';
 import { queueStore } from './idb.js';
 import { flagLabel, distanceM } from './rules.js';
 import { $, $$, esc, ymd, hm, hms, dt, uid, toast, getPosition, mins } from './util.js';
 
 const V = {};
-const S = { profile: null, deviceId: null, routes: [], route: null, patrol: null, scans: [], cur: null, lastPos: null, queue: [], screen: '' };
+const S = { profile: null, deviceId: null, routes: [], route: null, patrol: null, scans: [], cur: null, lastPos: null, queue: [], screen: '', uvAt: 0 };
+const PRE_LOGIN = ['login', 'device', 'welcome', 'register', 'pending', 'unlock'];
+
+// 本機的臉部登入資料：{ credentialId, requestId, staffNo, name, status, simulated }
+const store = key => ({
+  get() { try { return JSON.parse(localStorage.getItem(key)) || null; } catch { return null; } },
+  set(v) { try { v ? localStorage.setItem(key, JSON.stringify(v)) : localStorage.removeItem(key); } catch { /* 無法保存時略過 */ } },
+});
+const PK = store('yzup-passkey');
+const LAST = store('yzup-last');   // 上次使用的路線與天候，供一鍵報到
+const faceReady = () => PK.get()?.status === 'approved';
+const shiftNow = () => { const h = new Date().getHours(); return CONFIG.SHIFTS[h >= 22 || h < 6 ? 0 : h < 14 ? 1 : 2]; };
 let cleanup = null;
 
 // ---------- 裝置識別 ----------
@@ -34,14 +46,14 @@ function go(name, arg) {
   S.screen = name;
   window.scrollTo(0, 0);
   const tabs = $('#tabs');
-  tabs.hidden = !S.profile || name === 'login' || name === 'device';
+  tabs.hidden = !S.profile || PRE_LOGIN.includes(name);
   const tab = ['home', 'patrol', 'scan', 'record', 'incident', 'end', 'selfie'].includes(name) ? 'patrol' : ['history', 'detail'].includes(name) ? 'history' : name;
   $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   Promise.resolve(V[name](arg)).catch(showError);
   renderStatus();
 }
 function showError(e) {
-  if (String(e?.message).includes('請重新登入')) { S.profile = null; return go('login'); }
+  if (String(e?.message).includes('請重新登入')) { S.profile = null; return go(faceReady() ? 'unlock' : 'welcome'); }
   toast(e?.message || String(e), 'bad');
 }
 $('#tabs').addEventListener('click', e => {
@@ -302,10 +314,164 @@ const stampLines = (title) => {
 };
 const opts = (arr, sel) => arr.map(v => `<option${v === sel ? ' selected' : ''}>${esc(v)}</option>`).join('');
 
+// ---------- 畫面：歡迎（尚未註冊的手機） ----------
+V.welcome = () => {
+  html(`
+    <div><div class="eyebrow">${esc(CONFIG.ORG_NAME)}・總務處</div><h2>校園巡邏</h2></div>
+    <p style="margin:0">巡邏員第一次使用請先申請註冊。班長核准後，每次只要掃臉就能報到並開始巡邏。</p>
+    <button class="btn vest block" id="w-reg">第一次使用：申請註冊</button>
+    <button class="btn ghost block" id="w-pw">用工號密碼登入（班長、管理者）</button>
+    ${DEMO ? `<div class="banner demo"><div><b>示範模式</b>：可直接申請註冊，再用電腦開啟管理後台，以班長 <span class="mono">S001</span>／密碼 <span class="mono">demo1234</span> 核准，體驗完整流程。</div></div>` : ''}`);
+  $('#w-reg').onclick = () => go('register');
+  $('#w-pw').onclick = () => go('login');
+};
+
+const privacyText = () => `${esc(CONFIG.ORG_NAME)}為執行校園安全巡查，蒐集您的姓名、工號、手機號碼與手機裝置代碼，並於「開始巡邏」至「結束巡邏」期間蒐集定位、巡查照片與身分確認自拍照。
+  臉部辨識由您的手機執行，學校只收到「驗證通過」的結果，不取得、不儲存您的臉部特徵。
+  資料僅供巡邏管理、安全事件處理與稽核使用，照片保存 ${CONFIG.PHOTO_RETENTION_DAYS} 天後刪除；非巡邏時間不蒐集定位。您可向總務處申請查閱、更正或停止使用。`;
+
+// ---------- 畫面：申請註冊 ----------
+V.register = async () => {
+  const ok = await wa.supported();
+  html(`<button class="btn ghost sm" id="back" style="align-self:flex-start">← 返回</button>
+    <div><h2>申請註冊</h2><div class="small">送出後由班長核准。核准後，這支手機每次只要掃臉即可報到。</div></div>
+    ${!ok ? `<div class="banner warn">這支手機或瀏覽器無法使用臉部辨識。iPhone 請用 Safari、Android 請用 Chrome 開啟，並確認手機已設定 Face ID 或指紋。</div>` : ''}
+    <form id="rf" class="stack" novalidate>
+      <label class="f">工號<input id="r-no" autocapitalize="characters" autocomplete="off" required placeholder="例：G1030"></label>
+      <label class="f">姓名<input id="r-name" autocomplete="name" required></label>
+      <label class="f">手機號碼（選填，緊急聯絡用）<input id="r-phone" type="tel" autocomplete="tel" inputmode="tel"></label>
+      <label class="f">所屬單位<input id="r-org" placeholder="例：總務處、○○保全公司"></label>
+      <details class="card small" open><summary>個人資料蒐集告知</summary><p style="margin:8px 0 0">${privacyText()}</p></details>
+      <label style="display:flex;gap:10px;align-items:center"><input type="checkbox" id="r-ok" style="width:20px;height:20px;accent-color:var(--vest)"> 我已閱讀並同意上述告知事項</label>
+      <button class="btn vest block" id="r-go" ${ok ? '' : 'disabled'}>下一步：設定臉部辨識並送出</button>
+    </form>
+    ${DEMO ? '<button class="btn ghost block" id="r-sim">用模擬臉部辨識送出（電腦測試用）</button>' : ''}`);
+  $('#back').onclick = () => go('welcome');
+  const submit = async simulate => {
+    const info = { staff_no: $('#r-no').value.trim().toUpperCase(), name: $('#r-name').value.trim(), phone: $('#r-phone').value.trim(), org: $('#r-org').value.trim() };
+    if (!/^[A-Z0-9_-]{2,20}$/.test(info.staff_no)) return toast('請填寫正確的工號（英文字母或數字）', 'bad');
+    if (!info.name) return toast('請填寫姓名', 'bad');
+    if (!$('#r-ok').checked) return toast('請先閱讀並勾選同意個人資料蒐集告知', 'bad');
+    const btn = $('#r-go'); btn.disabled = true; btn.textContent = '請依手機提示掃臉…';
+    try {
+      const r = await api.passkeyRegister({ ...info, deviceId: S.deviceId, deviceLabel: deviceLabel(), simulate });
+      PK.set({ credentialId: r.credentialId, requestId: r.requestId, staffNo: info.staff_no, name: info.name, status: 'pending', simulated: !!simulate, at: new Date().toISOString() });
+      go('pending');
+    } catch (e) { toast(e.message, 'bad'); btn.disabled = !ok; btn.textContent = '下一步：設定臉部辨識並送出'; }
+  };
+  $('#rf').addEventListener('submit', e => { e.preventDefault(); submit(false); });
+  $('#r-sim')?.addEventListener('click', () => submit(true));
+};
+
+// ---------- 畫面：等待核准 ----------
+V.pending = () => {
+  const pk = PK.get(); if (!pk) return go('welcome');
+  html(`<h2>申請已送出</h2>
+    <div class="card"><dl class="kv"><dt>工號</dt><dd class="mono">${esc(pk.staffNo)}</dd><dt>姓名</dt><dd>${esc(pk.name)}</dd><dt>送出時間</dt><dd class="mono">${dt(pk.at)}</dd></dl></div>
+    <div id="st"><p style="margin:0">請通知班長到管理後台「人員與裝置」核准。核准後，這個畫面會自動進入。</p></div>
+    <button class="btn vest block" id="chk">重新檢查</button>
+    <button class="btn ghost block" id="redo">取消申請，重新填寫</button>`);
+  const check = async manual => {
+    const r = await api.registrationStatus(pk.requestId, S.deviceId);
+    if (r.status === 'approved') { PK.set({ ...pk, status: 'approved' }); toast('申請已核准，請掃臉報到'); return go('unlock'); }
+    if (r.status === 'rejected') {
+      $('#st').innerHTML = `<div class="banner bad"><div><b>申請未通過</b>：${esc(r.reason || '')}<br>請修正後重新申請，或洽班長。</div></div>`;
+      $('#chk').hidden = true; $('#redo').textContent = '重新申請';
+      return;
+    }
+    if (r.status === 'missing') { PK.set(null); toast('找不到申請資料，請重新申請', 'bad'); return go('register'); }
+    if (manual) toast('尚未核准，請稍候');
+  };
+  $('#chk').onclick = () => check(true).catch(showError);
+  $('#redo').onclick = () => { PK.set(null); go('register'); };
+  const t = setInterval(() => check(false).catch(() => {}), 15000);
+  cleanup = () => clearInterval(t);
+  check(false).catch(() => {});
+};
+
+// ---------- 畫面：掃臉報到（日常使用） ----------
+async function faceLogin() {
+  const pk = PK.get();
+  S.profile = await api.passkeyLogin({ credentialId: pk.credentialId, deviceId: S.deviceId, simulate: pk.simulated });
+  S.uvAt = Date.now();
+  sync();
+}
+V.unlock = () => {
+  const pk = PK.get(); if (!pk) return go('welcome');
+  const last = LAST.get();
+  html(`
+    <div style="text-align:center" class="stack">
+      <svg width="88" height="88" viewBox="0 0 88 88" aria-hidden="true" style="margin:8px auto 0;display:block">
+        <g fill="none" stroke="var(--vest)" stroke-width="5" stroke-linecap="round">
+          <path d="M8 26V14a6 6 0 0 1 6-6h12M62 8h12a6 6 0 0 1 6 6v12M80 62v12a6 6 0 0 1-6 6H62M26 80H14a6 6 0 0 1-6-6V62"/>
+          <path d="M30 32v6M58 32v6M44 34v14h-4M32 60c7 6 17 6 24 0"/></g></svg>
+      <div><h2>${esc(pk.name)}，您好</h2><div class="small mono">${esc(pk.staffNo)}</div></div>
+    </div>
+    <div class="card"><dl class="kv"><dt>日期</dt><dd class="mono">${ymd(new Date())}</dd><dt>時間</dt><dd class="mono" id="clock">${hms(new Date())}</dd>
+      <dt>班別</dt><dd>${esc(shiftNow())}</dd><dt>路線</dt><dd>${last?.routeName ? esc(last.routeName) : '登入後選擇'}</dd>
+      <dt>天候</dt><dd>${esc(last?.weather || CONFIG.WEATHER[0])}</dd></dl>
+      <div class="small" style="margin-top:6px">掃臉後立即以伺服器時間報到。要更換路線或天候，請選「掃臉進入」。</div></div>
+    <button class="btn vest block" id="u-start" style="min-height:58px;font-size:17px">掃臉報到並開始巡邏</button>
+    <button class="btn ghost block" id="u-in">掃臉進入（暫不開始巡邏）</button>
+    <details class="card small"><summary>無法使用臉部辨識？</summary>
+      <p>請先確認手機的 Face ID 或指紋可以正常解鎖。換手機、重設 Face ID 或刪除網站資料後，需重新申請註冊並由班長核准。</p>
+      <div class="stack"><button class="btn ghost block" id="u-re">重新申請註冊此手機</button>
+      <button class="btn ghost block" id="u-pw">改用工號密碼登入</button></div></details>
+    ${sosHtml()}`);
+  bindSOS();
+  const clk = setInterval(() => { const c = $('#clock'); if (c) c.textContent = hms(new Date()); }, 1000);
+  cleanup = () => clearInterval(clk);
+  const busy = (btn, on, text) => { $$('#u-start, #u-in').forEach(b => (b.disabled = on)); btn.textContent = text; };
+  $('#u-start').onclick = async e => {
+    const btn = e.currentTarget; busy(btn, true, '請依手機提示掃臉…');
+    try {
+      await faceLogin();
+      const st = await api.registerDevice(S.deviceId, deviceLabel());
+      if (st !== 'active') return go('device', st);
+      S.routes = await api.getRoutes();
+      const ap = await api.getActivePatrol();
+      if (ap) { toast('繼續進行中的巡邏'); return afterLogin(); }
+      const route = S.routes.find(r => r.id === last?.routeId) || (S.routes.length === 1 ? S.routes[0] : null);
+      if (!route) { toast('請選擇今天的巡邏路線'); return go('home'); }
+      await startPatrolWith({ routeId: route.id, shift: shiftNow(), weather: last?.weather || CONFIG.WEATHER[0] }, true);
+    } catch (err) { toast(err.message, 'bad'); busy(btn, false, '掃臉報到並開始巡邏'); }
+  };
+  $('#u-in').onclick = async e => {
+    const btn = e.currentTarget; busy(btn, true, '請依手機提示掃臉…');
+    try { await faceLogin(); await afterLogin(); } catch (err) { toast(err.message, 'bad'); busy(btn, false, '掃臉進入（暫不開始巡邏）'); }
+  };
+  $('#u-re').onclick = e => {
+    if (e.currentTarget.dataset.armed !== '1') { e.currentTarget.dataset.armed = '1'; e.currentTarget.textContent = '再按一次確認：本機臉部登入將失效，需重新核准'; return; }
+    PK.set(null); go('register');
+  };
+  $('#u-pw').onclick = () => go('login');
+};
+
+// 開始巡邏（首頁與掃臉報到共用）
+async function startPatrolWith({ routeId, shift, weather }, uvOk) {
+  const pos = await locate(null);
+  S.patrol = await api.startPatrol({ routeId, shift, weather, deviceId: S.deviceId, lat: pos?.lat ?? null, lng: pos?.lng ?? null, uvOk });
+  S.scans = []; S.route = S.routes.find(r => r.id === routeId);
+  LAST.set({ routeId, routeName: S.route?.name, weather });
+  planSelfies(); startTracking(); keepAwake(true);
+  toast('已報到並開始巡邏，定位記錄啟用');
+  go('patrol');
+}
+// 開始巡邏前確認本人：已註冊臉部登入者 15 分鐘內免重掃；密碼登入者沿用手機端生物辨識
+async function verifyIdentity() {
+  if (faceReady()) {
+    if (Date.now() - S.uvAt < 14 * 60000) return true;
+    await faceLogin();
+    return true;
+  }
+  if (bio.storedCredential(S.profile.id)) return bio.verify(S.profile.id);
+  return false;
+}
+
 // ---------- 畫面：登入 ----------
 V.login = () => {
-  html(`
-    <div><div class="eyebrow">${esc(CONFIG.ORG_NAME)}・總務處</div><h2>巡邏員登入</h2></div>
+  html(`<button class="btn ghost sm" id="back" style="align-self:flex-start">← 返回</button>
+    <div><div class="eyebrow">${esc(CONFIG.ORG_NAME)}・總務處</div><h2>工號密碼登入</h2></div>
     ${DEMO ? `<div class="banner demo"><div><b>示範模式</b>：資料只存在這台裝置。<br>
       示範帳號：<span class="mono">G1024</span>、<span class="mono">G1025</span>（巡邏員），密碼 <span class="mono">demo1234</span></div></div>` : ''}
     <form id="f" class="stack" novalidate>
@@ -317,6 +483,7 @@ V.login = () => {
       <p>${esc(CONFIG.ORG_NAME)}為執行校園安全巡查，於您按下「開始巡邏」至「結束巡邏」期間，蒐集您的定位、巡查照片與身分確認自拍照。
       資料僅供巡邏管理、安全事件處理與稽核使用，照片保存 ${CONFIG.PHOTO_RETENTION_DAYS} 天後刪除；非巡邏時間不會蒐集定位。
       您可向總務處申請查閱或更正本人資料。</p></details>`);
+  $('#back').onclick = () => go(faceReady() ? 'unlock' : 'welcome');
   $('#f').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = $('#login-btn'); btn.disabled = true; btn.textContent = '登入中…';
@@ -351,24 +518,25 @@ V.device = st => {
     <button class="btn vest block" id="retry">已核准，重新檢查</button>
     <button class="btn ghost block" id="out">登出</button>`);
   $('#retry').onclick = () => afterLogin().catch(showError);
-  $('#out').onclick = async () => { await api.logout(); S.profile = null; go('login'); };
+  $('#out').onclick = async () => { await api.logout(); S.profile = null; go(faceReady() ? 'unlock' : 'welcome'); };
 };
 
 // ---------- 畫面：首頁 ----------
 V.home = async () => {
   if (S.patrol) return go('patrol');
-  const h = new Date().getHours();
-  const shift = CONFIG.SHIFTS[h >= 22 || h < 6 ? 0 : h < 14 ? 1 : 2];
-  const hasBio = !!bio.storedCredential(S.profile.id);
+  const shift = shiftNow();
+  const face = faceReady();
+  const hasBio = face || !!bio.storedCredential(S.profile.id);
+  const last = LAST.get();
   html(`
     <div><div class="small">${esc(S.profile.staff_no)}・${esc(S.profile.name)}</div><h2>開始巡邏</h2></div>
     <div class="card"><dl class="kv"><dt>日期</dt><dd class="mono">${ymd(new Date())}</dd><dt>時間</dt><dd class="mono" id="clock">${hms(new Date())}</dd>
-      <dt>身分驗證</dt><dd>${hasBio ? '<span class="chip ok">指紋／臉部辨識已啟用</span>' : '<span class="chip warn">尚未啟用生物辨識</span>'}</dd></dl>
+      <dt>身分驗證</dt><dd>${face ? '<span class="chip ok">臉部辨識登入</span>' : hasBio ? '<span class="chip ok">指紋／臉部辨識已啟用</span>' : '<span class="chip warn">尚未啟用生物辨識</span>'}</dd></dl>
       <div class="small" style="margin-top:6px">開始時間以伺服器時間記錄，無法手動修改。</div></div>
     ${S.routes.length ? `
     <label class="f">班別<select id="shift">${opts(CONFIG.SHIFTS, shift)}</select></label>
-    <label class="f">巡邏路線<select id="route">${S.routes.map(r => `<option value="${r.id}">${esc(r.name)}（${r.points.length} 點${r.mode === 'ordered' ? '・依序' : ''}）</option>`).join('')}</select></label>
-    <label class="f">天候<select id="wx">${opts(CONFIG.WEATHER)}</select></label>
+    <label class="f">巡邏路線<select id="route">${S.routes.map(r => `<option value="${r.id}"${r.id === last?.routeId ? ' selected' : ''}>${esc(r.name)}（${r.points.length} 點${r.mode === 'ordered' ? '・依序' : ''}）</option>`).join('')}</select></label>
+    <label class="f">天候<select id="wx">${opts(CONFIG.WEATHER, last?.weather)}</select></label>
     <button class="btn vest block" id="start">開始巡邏</button>` : '<div class="banner warn">目前沒有可用的巡邏路線，請洽管理者設定。</div>'}
     ${!hasBio ? '<button class="btn ghost block" id="go-bio">設定指紋／臉部辨識</button>' : ''}
     ${sosHtml()}`);
@@ -380,17 +548,11 @@ V.home = async () => {
     const btn = e.currentTarget; btn.disabled = true; btn.textContent = '驗證身分中…';
     try {
       let uvOk = false;
-      if (bio.storedCredential(S.profile.id)) uvOk = await bio.verify(S.profile.id);
+      try { uvOk = await verifyIdentity(); } catch (err) { if (face) throw err; }
       if (!uvOk && CONFIG.REQUIRE_BIOMETRIC) throw new Error(hasBio ? '生物辨識未通過，無法開始巡邏' : '請先到「設定」啟用指紋或臉部辨識');
       if (!uvOk) toast('未通過生物辨識，本場巡邏將標記供主管覆核');
       btn.textContent = '定位中…';
-      const pos = await locate(null);
-      const routeId = $('#route').value;
-      S.patrol = await api.startPatrol({ routeId, shift: $('#shift').value, weather: $('#wx').value, deviceId: S.deviceId, lat: pos?.lat ?? null, lng: pos?.lng ?? null, uvOk });
-      S.scans = []; S.route = S.routes.find(r => r.id === routeId);
-      planSelfies(); startTracking(); keepAwake(true);
-      toast('已開始巡邏，定位記錄啟用');
-      go('patrol');
+      await startPatrolWith({ routeId: $('#route').value, shift: $('#shift').value, weather: $('#wx').value }, uvOk);
     } catch (err) { toast(err.message, 'bad'); btn.disabled = false; btn.textContent = '開始巡邏'; }
   });
 };
@@ -672,10 +834,13 @@ V.detail = async id => {
 V.settings = async () => {
   const canBio = await bio.available();
   const hasBio = !!bio.storedCredential(S.profile.id);
+  const face = faceReady();
   const staff = ['supervisor', 'admin'].includes(S.profile.role);
   html(`<h2>設定</h2>
     <div class="card"><dl class="kv"><dt>姓名</dt><dd>${esc(S.profile.name)}</dd><dt>工號</dt><dd class="mono">${esc(S.profile.staff_no)}</dd>
       <dt>本機代碼</dt><dd class="mono">${esc(S.deviceId.slice(0, 8))}</dd><dt>裝置</dt><dd>${esc(deviceLabel())}</dd></dl></div>
+    ${face ? `<section class="card stack"><b>登入方式</b>
+      <div class="small">這支手機已註冊臉部辨識登入，每次開啟只要掃臉即可報到。換手機或重設 Face ID 後，需重新申請。</div></section>` : `
     <section class="card stack"><b>指紋／臉部辨識</b>
       <div class="small">${!canBio ? '此手機或瀏覽器不支援。iPhone 請用 Safari 並將本網站「加入主畫面」；Android 請用 Chrome。'
         : hasBio ? '已啟用。開始巡邏時需通過驗證。' : '啟用後，每次開始巡邏都需以本人指紋或臉部解鎖。'}</div>
@@ -686,7 +851,7 @@ V.settings = async () => {
         <label class="f">新密碼（至少 8 碼）<input id="pw-new" type="password" autocomplete="new-password" minlength="8" required></label>
         <label class="f">再輸入一次新密碼<input id="pw-new2" type="password" autocomplete="new-password" required></label>
         <button class="btn ghost block">變更密碼</button></form>
-      <div class="small">忘記密碼請洽班長或總務處重設。</div></section>
+      <div class="small">忘記密碼請洽班長或總務處重設。</div></section>`}
     <section class="card stack"><b>離線暫存</b>
       <div class="small">尚未上傳 ${S.queue.length} 筆。恢復連線後會自動上傳。</div>
       <button class="btn ghost block" id="sync" ${S.queue.length ? '' : 'disabled'}>立即上傳</button></section>
@@ -699,7 +864,7 @@ V.settings = async () => {
   $('#bio')?.addEventListener('click', async () => {
     try { await bio.enroll(S.profile); toast('生物辨識已啟用'); go('settings'); } catch (e) { toast('設定未完成：' + e.message, 'bad'); }
   });
-  $('#pwf').addEventListener('submit', async e => {
+  $('#pwf')?.addEventListener('submit', async e => {
     e.preventDefault();
     const o = $('#pw-old').value, n = $('#pw-new').value;
     if (n.length < 8) return toast('新密碼至少 8 碼', 'bad');
@@ -715,7 +880,7 @@ V.settings = async () => {
   });
   $('#logout').onclick = async e => {
     if (S.patrol && e.currentTarget.dataset.armed !== '1') { e.currentTarget.dataset.armed = '1'; e.currentTarget.textContent = '巡邏尚未結束，再按一次仍要登出'; return; }
-    stopTracking(); keepAwake(false); await api.logout(); Object.assign(S, { profile: null, patrol: null, scans: [], route: null }); go('login');
+    stopTracking(); keepAwake(false); await api.logout(); Object.assign(S, { profile: null, patrol: null, scans: [], route: null, uvAt: 0 }); go(faceReady() ? 'unlock' : 'welcome');
   };
 };
 
@@ -724,11 +889,15 @@ V.settings = async () => {
   S.deviceId = getDeviceId();
   await refreshQueue();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  const pk = PK.get();
+  if (pk?.status === 'pending') return go('pending');
+  // 已註冊臉部登入的手機：每次開啟都要掃臉，避免手機交給他人使用
+  if (pk?.status === 'approved') return go('unlock');
   try {
     S.profile = await api.currentProfile();
     if (S.profile) { await afterLogin(); sync(); return; }
   } catch (e) {
     if (isNetworkError(e)) toast('無法連線伺服器，請確認網路', 'bad');
   }
-  go('login');
+  go('welcome');
 })();

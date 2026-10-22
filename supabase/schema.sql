@@ -556,3 +556,84 @@ create policy p_rr_sel on public.report_runs for select to authenticated using (
 revoke all on public.report_settings, public.report_runs from anon, authenticated;
 grant select on public.report_settings, public.report_runs to authenticated;
 grant update (enabled, recipients, send_hour, send_minute, day_start_hour, report_scope, updated_at, updated_by) on public.report_settings to authenticated;
+
+-- ---------- 巡邏員自行註冊與臉部辨識登入 ----------
+create table if not exists public.registration_requests (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null default 'new' check (kind in ('new','rebind')),
+  staff_no text not null,
+  name text not null,
+  phone text,
+  org text,
+  device_id text not null,
+  device_label text,
+  credential_id text not null,
+  public_key text not null,
+  counter bigint not null default 0,
+  transports text[],
+  consent_at timestamptz not null,
+  status text not null default 'pending' check (status in ('pending','approved','rejected')),
+  reject_reason text,
+  created_at timestamptz not null default now(),
+  decided_by uuid references public.profiles(id),
+  decided_at timestamptz,
+  user_id uuid references public.profiles(id)
+);
+create index if not exists reg_status_idx on public.registration_requests(status, created_at desc);
+
+create table if not exists public.passkeys (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  device_id text not null,
+  credential_id text unique not null,
+  public_key text not null,
+  counter bigint not null default 0,
+  transports text[],
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  last_used_at timestamptz
+);
+
+create table if not exists public.webauthn_challenges (
+  id uuid primary key default gen_random_uuid(),
+  challenge text not null,
+  purpose text not null,
+  created_at timestamptz not null default now()
+);
+
+-- 最近一次通過臉部辨識的時間，由伺服器寫入
+alter table public.devices add column if not exists last_uv_at timestamptz;
+
+alter table public.registration_requests enable row level security;
+alter table public.passkeys enable row level security;
+alter table public.webauthn_challenges enable row level security;
+drop policy if exists p_reg_sel on public.registration_requests;
+create policy p_reg_sel on public.registration_requests for select to authenticated using (is_staff());
+drop policy if exists p_pk_sel on public.passkeys;
+create policy p_pk_sel on public.passkeys for select to authenticated using (user_id = auth.uid() or is_staff());
+revoke all on public.registration_requests, public.passkeys, public.webauthn_challenges from anon, authenticated;
+grant select (id, kind, staff_no, name, phone, org, device_id, device_label, consent_at, status, reject_reason, created_at, decided_by, decided_at, user_id)
+  on public.registration_requests to authenticated;
+grant select (id, user_id, device_id, active, created_at, last_used_at) on public.passkeys to authenticated;
+
+-- 開始巡邏：「已通過身分驗證」改由伺服器判定（15 分鐘內在此手機通過臉部辨識），不採信手機回報
+create or replace function public.start_patrol(p_route_id uuid, p_shift text, p_weather text, p_device_id text,
+  p_lat double precision, p_lng double precision, p_uv_ok boolean)
+returns public.patrols language plpgsql security definer set search_path = public as $$
+declare v_row patrols; v_uv boolean;
+begin
+  if not exists (select 1 from profiles where id = auth.uid() and active) then raise exception '此帳號已停用，請洽管理者'; end if;
+  if not exists (select 1 from devices where user_id = auth.uid() and device_id = p_device_id and status = 'active') then
+    raise exception '此裝置未獲授權，請洽主管';
+  end if;
+  if not exists (select 1 from routes where id = p_route_id and active) then raise exception '巡邏路線不存在或已停用'; end if;
+  select * into v_row from patrols where user_id = auth.uid() and status = 'active';
+  if found then return v_row; end if;
+  select exists (select 1 from devices where user_id = auth.uid() and device_id = p_device_id
+                 and last_uv_at > now() - interval '15 minutes') into v_uv;
+  insert into patrols (user_id, device_id, route_id, shift, weather, start_lat, start_lng, uv_ok, flags)
+  values (auth.uid(), p_device_id, p_route_id, p_shift, p_weather, p_lat, p_lng, v_uv,
+          case when v_uv then '{}'::text[] else array['UV_SKIPPED'] end)
+  returning * into v_row;
+  return v_row;
+end $$;

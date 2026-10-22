@@ -27,8 +27,9 @@
 ## 二、功能總覽
 
 **巡邏員手機端**
-1. 工號登入，帳號綁定第一支使用的手機；換機需主管核准。
-2. 指紋／臉部辨識後開始巡邏，日期時間由伺服器記錄。
+1. 第一次使用：填寫工號、姓名、同意個資告知，設定手機的 Face ID 或指紋後送出註冊申請，由班長核准。
+2. 日常使用：開啟後掃臉一次，即完成登入、報到並開始巡邏（沿用上次的路線）。臉部辨識結果由伺服器驗證。
+3. 帳號只能在註冊的那支手機使用；換機需重新申請並核准。日期時間由伺服器記錄。
 3. 掃描據點 QR Code，系統同時驗證位置是否在據點範圍內。
 4. App 內相機現場拍照（停用相簿），照片自動壓上姓名、據點、時間、座標浮水印，並計算雜湊值防竄改。
 5. 依據點類型勾選檢查項目，填寫正常或異常（類別、嚴重度、說明）。
@@ -84,6 +85,11 @@ supabase functions deploy admin
 ```
 此功能用於後台「新增人員」「重設密碼」「刪除過期照片」。
 
+### 步驟 2-1：部署臉部辨識登入功能
+1. Edge Functions → Secrets 新增：`WEBAUTHN_RP_ID`（網站網域，例如 `johnnyweb-art.github.io`）、`WEBAUTHN_ORIGINS`（例如 `https://johnnyweb-art.github.io`）、`LOGIN_EMAIL_DOMAIN`（與 `js/config.js` 相同）。
+2. 部署：`supabase functions deploy passkey --no-verify-jwt`
+3. 網站網址若變更（例如改放學校網域），需同步修改上述兩個設定，已註冊的手機也需重新申請。
+
 ### 步驟 3：建立第一位管理者
 1. **Authentication → Users → Add user**，Email 填 `a001@patrol.yzu.local`（工號小寫＋`@patrol.yzu.local`），設定密碼，勾選 Auto Confirm。
 2. 在 SQL Editor 執行：
@@ -109,7 +115,7 @@ update public.profiles set role = 'admin', name = '管理者姓名' where staff_
 2. 「QR 標籤列印」印出標籤，護貝後張貼。
 3. 「路線管理」建立路線。
 4. 巡邏員用手機開啟網址：iPhone 用 Safari →「分享」→「加入主畫面」；Android 用 Chrome →「加到主畫面」。
-5. 巡邏員第一次登入後，到「設定」啟用指紋／臉部辨識。
+5. 巡邏員按「第一次使用：申請註冊」，班長到管理後台「人員與裝置」核准。
 
 ## 五、檔案結構
 

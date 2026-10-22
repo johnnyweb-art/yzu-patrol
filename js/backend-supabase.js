@@ -2,6 +2,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 import { CONFIG } from './config.js';
 import { uid } from './util.js';
+import * as wa from './webauthn.js';
 import { dutyWindow, applyWindow, patrolOverlaps, DEFAULT_REPORT_SETTINGS } from './report.js';
 
 const sb = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
@@ -138,13 +139,14 @@ export const api = {
   async dashboard() {
     const t0 = new Date(); t0.setHours(0, 0, 0, 0);
     const today = t0.toISOString();
-    const [active, sos, inc, pend, devs, selfies, tp, ts, routes] = await Promise.all([
+    const [active, sos, inc, pend, devs, selfies, regs, tp, ts, routes] = await Promise.all([
       sb.from('patrols').select(`*, scans(status,flags,server_at), ${prof('patrols')}`).eq('status', 'active').then(chk),
       sb.from('sos_alerts').select(`*, ${prof('sos_alerts')}`).is('acknowledged_at', null).order('created_at', { ascending: false }).then(chk),
       sb.from('incidents').select(`*, ${prof('incidents')}`).neq('status', 'closed').order('created_at', { ascending: false }).then(chk),
       sb.from('scans').select('id', { count: 'exact', head: true }).eq('review_status', 'pending'),
       sb.from('devices').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       sb.from('selfies').select('id', { count: 'exact', head: true }).eq('result', 'pending'),
+      sb.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       sb.from('patrols').select('id', { count: 'exact', head: true }).gte('started_at', today),
       sb.from('scans').select('status,flags').gte('server_at', today).then(chk),
       routesWithPoints(false, false)]);
@@ -152,7 +154,7 @@ export const api = {
       active: active.map(p => summarize(p, routes)),
       sos: sos.map(s => ({ ...s, profile: s.profiles })),
       openIncidents: inc.map(i => ({ ...i, profile: i.profiles })),
-      pendingReview: pend.count || 0, pendingDevices: devs.count || 0, pendingSelfies: selfies.count || 0,
+      pendingReview: pend.count || 0, pendingDevices: devs.count || 0, pendingSelfies: selfies.count || 0, pendingRegistrations: regs.count || 0,
       today: { patrols: tp.count || 0, scans: ts.length, abnormal: ts.filter(s => s.status === 'abnormal').length, flagged: ts.filter(s => s.flags.length).length },
     };
   },
@@ -235,6 +237,44 @@ export const api = {
     return chk(await q).map(s => ({ ...s, profile: s.profiles }));
   },
   async reviewSelfie(id, result) { chk(await sb.from('selfies').update({ result, reviewed_by: await myId() }).eq('id', id)); },
+
+  // ===== 自行註冊與臉部辨識登入（伺服器驗證） =====
+  async _fn(name, body) {
+    const { data, error } = await sb.functions.invoke(name, { body });
+    if (error) {
+      let msg = error.message;
+      try { msg = (await error.context.json()).error || msg; } catch { /* 保留原訊息 */ }
+      const e = new Error(msg); if (/fetch|network/i.test(msg)) e.code = 'NETWORK'; throw e;
+    }
+    return data;
+  },
+  async passkeyRegister({ staff_no, name, phone, org, deviceId, deviceLabel }) {
+    const o = await api._fn('passkey', { action: 'register-options', staff_no, name });
+    let response;
+    try { response = await wa.startRegistration(o.options); } catch (e) { throw new Error(wa.friendlyError(e)); }
+    const r = await api._fn('passkey', { action: 'register-submit', challengeId: o.challengeId, response, staff_no, name, phone, org,
+      device_id: deviceId, device_label: deviceLabel, consent: true });
+    return { requestId: r.requestId, credentialId: r.credentialId };
+  },
+  registrationStatus: (requestId, deviceId) => api._fn('passkey', { action: 'status', requestId, device_id: deviceId }),
+  async passkeyLogin({ credentialId, deviceId }) {
+    const o = await api._fn('passkey', { action: 'login-options', credential_id: credentialId });
+    let response;
+    try { response = await wa.startAuthentication(o.options); } catch (e) { throw new Error(wa.friendlyError(e)); }
+    const r = await api._fn('passkey', { action: 'login-verify', challengeId: o.challengeId, response, device_id: deviceId });
+    chk(await sb.auth.verifyOtp({ token_hash: r.token_hash, type: 'magiclink' }));
+    const p = await api.currentProfile();
+    if (!p) throw new Error('找不到人員資料或帳號已停用');
+    return p;
+  },
+  async listRegistrations({ status } = {}) {
+    let q = sb.from('registration_requests').select('id,kind,staff_no,name,phone,org,device_id,device_label,consent_at,status,reject_reason,created_at,decided_at')
+      .order('created_at', { ascending: false }).limit(200);
+    if (status) q = q.eq('status', status);
+    return chk(await q);
+  },
+  approveRegistration: id => api._admin('approveRegistration', { request_id: id, email_domain: CONFIG.LOGIN_EMAIL_DOMAIN }),
+  rejectRegistration: (id, reason) => api._admin('rejectRegistration', { request_id: id, reason }),
 
   async changePassword(oldPw, newPw) {
     if (String(newPw).length < 8) throw new Error('新密碼至少 8 碼');
