@@ -3,7 +3,8 @@ import { CONFIG } from './config.js';
 import { api, DEMO } from './api.js';
 import { qrPayload } from './camera.js';
 import { flagLabel, FLAG_LABELS } from './rules.js';
-import { $, $$, esc, ymd, hm, hms, dt, toast, getPosition, mins, downloadText, csvCell } from './util.js';
+import { buildWorkbook, reportTables, reportFileName, lastCompletedDutyDay } from './report.js';
+import { $, $$, esc, ymd, hm, hms, dt, toast, getPosition, mins, downloadText, downloadBlob, csvCell } from './util.js';
 
 const P = {};
 const S = { profile: null, page: 'dash', counts: {} };
@@ -51,7 +52,7 @@ async function loadPhotos(root = document) {
 
 // ---------- 版面 ----------
 const NAV = [
-  ['dash', '即時看板'], ['patrols', '巡邏場次'], ['scans', '定點紀錄查詢'], ['incidents', '事件管理'], ['selfies', '身分確認'],
+  ['dash', '即時看板'], ['report', '每日巡查日報表'], ['patrols', '巡邏場次'], ['scans', '定點紀錄查詢'], ['incidents', '事件管理'], ['selfies', '身分確認'],
   ['stats', '統計分析'], ['checkpoints', '據點管理', true], ['routes', '路線管理', true], ['labels', 'QR 標籤列印', true], ['people', '人員與裝置'],
 ];
 function shell() {
@@ -129,6 +130,89 @@ P.dash = async main => {
   $('#go-dev')?.addEventListener('click', () => show('people'));
 };
 
+// ---------- 每日巡查日報表 ----------
+function loadExcelJS() {
+  if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+  return new Promise((res, rej) => {
+    const sc = document.createElement('script');
+    sc.src = 'vendor/exceljs.min.js';
+    sc.onload = () => res(window.ExcelJS);
+    sc.onerror = () => rej(new Error('Excel 元件載入失敗，請檢查網路'));
+    document.head.append(sc);
+  });
+}
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+P.report = async main => {
+  const st = await api.getReportSettings();
+  const hours = Array.from({ length: 24 }, (_, h) => [String(h), `${String(h).padStart(2, '0')}:00`]);
+  const def = lastCompletedDutyDay(new Date(), st.day_start_hour);
+  main.innerHTML = `<h1>每日巡查日報表</h1>
+    <div class="small">勤務日以每日 ${String(st.day_start_hour).padStart(2, '0')}:00 為分界，例如「10/21 勤務日」涵蓋 10/21 ${String(st.day_start_hour).padStart(2, '0')}:00 至 10/22 ${String(st.day_start_hour).padStart(2, '0')}:00，夜班不會被拆成兩天。</div>
+    <form class="filters" id="f"><label class="f">勤務日<input type="date" id="day" value="${def}" max="${today()}"></label>
+      <button class="btn">預覽</button><button type="button" class="btn vest" id="xlsx">下載 Excel</button>
+      <button type="button" class="btn ghost" id="send">立即寄送給收件人</button></form>
+    <div id="out"></div>
+    <section class="card stack"><h3>自動寄送設定</h3>
+      ${DEMO ? '<div class="banner demo">示範模式沒有寄信伺服器，此處設定可儲存但不會實際寄出。正式上線後，系統每天依設定時間自動寄出 Excel 日報表。</div>' : ''}
+      <form id="sf" class="stack">
+        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="s-en" ${st.enabled ? 'checked' : ''} ${isAdmin() ? '' : 'disabled'}> 每天自動寄送前一勤務日的日報表</label>
+        <label class="f">收件人 Email（一行一位，例如隊長、總務處承辦人）<textarea id="s-to" rows="3" ${isAdmin() ? '' : 'disabled'} placeholder="captain@example.com">${esc((st.recipients || []).join('\n'))}</textarea></label>
+        <div class="row"><label class="f">每天寄送時間<select id="s-hr" ${isAdmin() ? '' : 'disabled'}>${opts(hours, String(st.send_hour))}</select></label>
+          <label class="f">勤務日分界時間<select id="s-start" ${isAdmin() ? '' : 'disabled'}>${opts(hours, String(st.day_start_hour))}</select></label></div>
+        <div class="small">寄送時間需晚於勤務日分界時間，才能涵蓋完整一天；建議分界 06:00、寄送 07:00。</div>
+        ${isAdmin() ? '<button class="btn vest" style="align-self:flex-start">儲存設定</button>' : '<div class="small">僅管理者可修改設定。</div>'}
+      </form></section>
+    <section class="stack"><h3>寄送紀錄</h3><div id="runs"></div></section>`;
+  let data = null;
+  const preview = async () => {
+    data = await api.reportData($('#day').value);
+    const t = reportTables(data), s = t.stats;
+    $('#out').innerHTML = `
+      <div class="kpis"><div class="kpi"><b>${s.patrols}</b><span>巡邏場次</span></div><div class="kpi"><b>${s.completion}</b><span>據點完成率</span></div>
+        <div class="kpi ${s.missed ? 'alert' : ''}"><b>${s.missed}</b><span>未巡據點</span></div><div class="kpi ${s.abnormal ? 'alert' : ''}"><b>${s.abnormal}</b><span>異常件數</span></div>
+        <div class="kpi ${s.pendingReview ? 'alert' : ''}"><b>${s.pendingReview}</b><span>待覆核</span></div><div class="kpi ${s.sos ? 'alert' : ''}"><b>${s.sos}</b><span>SOS</span></div></div>
+      <section class="stack"><h3>異常與事件</h3>${t.issueT.rows.length ? tbl(t.issueT.head, t.issueT.rows) : '<p class="empty card">本勤務日無異常與事件。</p>'}</section>
+      <section class="stack"><h3>巡邏場次</h3>${t.patrolT.rows.length ? tbl(t.patrolT.head.slice(1, 12), t.patrolT.rows.map(r => r.slice(1, 12))) : '<p class="empty card">本勤務日沒有巡邏紀錄。</p>'}</section>
+      <div class="small">Excel 另含「定點紀錄明細」工作表，共 ${t.scanT.rows.length} 筆。</div>`;
+  };
+  const tbl = (head, rows) => `<div class="tbl"><table><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</table></div>`;
+  const runs = async () => {
+    const rs = await api.listReportRuns();
+    $('#runs').innerHTML = rs.length ? tbl(['寄送時間', '勤務日', '方式', '收件人', '結果'], rs.map(r => [dt(r.run_at), r.report_day, r.trigger === 'cron' ? '自動' : '手動',
+      (r.recipients || []).join('、'), r.status === 'sent' ? '已寄出' : `失敗：${r.error || ''}`])) : '<p class="empty card">尚無寄送紀錄。</p>';
+  };
+  $('#f').onsubmit = e => { e.preventDefault(); preview().catch(err => toast(err.message, 'bad')); };
+  $('#xlsx').onclick = async e => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = '產生中…';
+    try {
+      if (!data || data.day !== $('#day').value) await preview();
+      const wb = await buildWorkbook(await loadExcelJS(), data, CONFIG.ORG_NAME);
+      const blob = new Blob([await wb.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      downloadBlob(reportFileName(data.day), blob);
+    } catch (err) { toast(err.message, 'bad'); }
+    btn.disabled = false; btn.textContent = '下載 Excel';
+  };
+  $('#send').onclick = async e => {
+    const btn = e.currentTarget; btn.disabled = true;
+    try { const r = await api.sendReportNow($('#day').value); toast(`已寄出 ${r.day} 日報表給 ${r.recipients.join('、')}`); runs(); }
+    catch (err) { toast(err.message, 'bad'); }
+    btn.disabled = false;
+  };
+  $('#sf').onsubmit = async e => {
+    e.preventDefault();
+    if (!isAdmin()) return;
+    const to = $('#s-to').value.split(/[\n,，;；\s]+/).map(x => x.trim()).filter(Boolean);
+    const bad = to.filter(x => !EMAIL_RE.test(x));
+    if (bad.length) return toast(`Email 格式不正確：${bad.join('、')}`, 'bad');
+    if ($('#s-en').checked && !to.length) return toast('啟用自動寄送前，請至少填寫一位收件人', 'bad');
+    try {
+      await api.saveReportSettings({ enabled: $('#s-en').checked, recipients: to, send_hour: +$('#s-hr').value, day_start_hour: +$('#s-start').value });
+      toast('設定已儲存'); show('report');
+    } catch (err) { toast(err.message, 'bad'); }
+  };
+  await Promise.all([preview(), runs()]);
+};
+
 // ---------- 巡邏場次 ----------
 let people = [];
 async function peopleOpts(sel) {
@@ -159,7 +243,7 @@ P.patrols = async main => {
     const head = ['日期', '工號', '姓名', '班別', '路線', '開始', '結束', '完成據點', '應巡據點', '異常數', '未巡據點與原因', '註記', '天候', '交接事項'];
     const body = rows.map(p => [ymd(p.started_at), p.profile?.staff_no, p.profile?.name, p.shift, p.route_name, dt(p.started_at), dt(p.ended_at), p.scan_count, p.point_count,
       p.abnormal_count, (p.missed || []).map(m => m.reason).join('；'), (p.flags || []).map(flagLabel).join('；'), p.weather, p.handover_note]);
-    downloadText(`巡邏場次_${$('#from').value}_${$('#to').value}.csv`, [head, ...body].map(r => r.map(csvCell).join(',')).join('\n'));
+    downloadText(`patrols_${$('#from').value}_${$('#to').value}.csv`, [head, ...body].map(r => r.map(csvCell).join(',')).join('\n'));
   };
   await run();
 };
@@ -224,7 +308,7 @@ P.scans = async main => {
     const body = rows.map(s => [dt(s.server_at) + ':' + String(new Date(s.server_at).getSeconds()).padStart(2, '0'), s.device_at ? hms(s.device_at) : '', s.profile?.staff_no, s.profile?.name,
       s.checkpoint?.code, s.checkpoint?.name, s.status === 'abnormal' ? '異常' : '正常', s.category, s.severity, s.note, s.distance_m, s.accuracy != null ? Math.round(s.accuracy) : '',
       (s.flags || []).map(flagLabel).join('；'), { pending: '待覆核', ok: '已確認', rejected: '退回' }[s.review_status] || '', s.review_note, (s.photo_paths || []).length, (s.photo_hashes || []).join(' ')]);
-    downloadText(`定點紀錄_${$('#from').value}_${$('#to').value}.csv`, [head, ...body].map(r => r.map(csvCell).join(',')).join('\n'));
+    downloadText(`checkpoint-records_${$('#from').value}_${$('#to').value}.csv`, [head, ...body].map(r => r.map(csvCell).join(',')).join('\n'));
   };
   await run();
 };

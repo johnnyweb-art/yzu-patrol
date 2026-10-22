@@ -37,10 +37,11 @@
 8. 巡邏中隨機要求自拍，供主管確認為本人。
 9. 結束巡邏時，未巡據點必須填寫原因，並完成交接清點。
 10. 無訊號處可繼續作業，資料暫存於手機，恢復連線後自動上傳。
-11. 只能查看本人的巡邏紀錄。
+11. 只能查看本人的巡邏紀錄；可自行變更密碼，但不能修改或刪除已送出的紀錄。
 
 **管理後台**
 1. 即時看板：進行中巡邏、SOS 警示、今日異常、待覆核數量。
+1. 每日巡查日報表：預覽、下載 Excel，並可設定每天自動寄送給隊長。
 2. 巡邏場次：地圖顯示據點、掃描位置與巡邏軌跡。
 3. 定點紀錄查詢：多條件篩選、照片檢視、主管覆核、匯出 CSV（可用 Excel 開啟）。
 4. 事件管理：未處理、處理中、已結案三階段追蹤。
@@ -96,7 +97,14 @@ update public.profiles set role = 'admin', name = '管理者姓名' where staff_
 2. 把整個資料夾放到任何支援 https 的靜態網站空間，例如學校網頁伺服器、Netlify、GitHub Pages。
    **必須是 https**，否則手機瀏覽器不允許使用相機與定位。
 
-### 步驟 5：現場建置
+### 步驟 5：設定每日自動寄送日報表（選用）
+1. 到 https://resend.com 註冊寄信服務，驗證學校的寄件網域，取得 API 金鑰。
+2. Supabase → **Edge Functions → Secrets** 新增：`RESEND_API_KEY`、`REPORT_FROM`（例如 `校園巡邏系統 <patrol@你的網域>`）、`REPORT_CRON_SECRET`（自訂一串亂碼）。
+3. 部署：`supabase functions deploy daily-report --no-verify-jwt`
+4. 編輯 `supabase/cron.sql`，填入專案代碼與 `REPORT_CRON_SECRET`，在 SQL Editor 執行。
+5. 管理後台「每日巡查日報表」→ 填寫收件人、寄送時間，勾選「每天自動寄送」後儲存。可先按「立即寄送給收件人」測試。
+
+### 步驟 6：現場建置
 1. 管理者帶手機到每個據點，在「據點管理」按「使用我目前的位置」標定座標。
 2. 「QR 標籤列印」印出標籤，護貝後張貼。
 3. 「路線管理」建立路線。
@@ -118,7 +126,8 @@ js/camera.js            QR 掃描、拍照、浮水印、雜湊
 js/biometric.js         指紋／臉部辨識
 supabase/schema.sql     資料庫結構與權限
 supabase/seed.sql       範例據點
-supabase/functions/     管理者專用伺服器功能
+supabase/cron.sql       每日日報表排程
+supabase/functions/     伺服器功能：admin（管理者）、daily-report（日報表寄送）、_shared（日報表共用程式）
 docs/                   需補充資料清單、已知限制、個資告知範本
 ```
 

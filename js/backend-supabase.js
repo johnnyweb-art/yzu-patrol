@@ -2,6 +2,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 import { CONFIG } from './config.js';
 import { uid } from './util.js';
+import { dutyWindow } from './report.js';
 
 const sb = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const CP_COLS = 'id,code,name,type,lat,lng,radius_m,enforce_fence,checklist,min_photos,active,note';
@@ -234,6 +235,52 @@ export const api = {
     return chk(await q).map(s => ({ ...s, profile: s.profiles }));
   },
   async reviewSelfie(id, result) { chk(await sb.from('selfies').update({ result, reviewed_by: await myId() }).eq('id', id)); },
+
+  async changePassword(oldPw, newPw) {
+    if (String(newPw).length < 8) throw new Error('新密碼至少 8 碼');
+    const { data } = await sb.auth.getSession();
+    const { error } = await sb.auth.signInWithPassword({ email: data.session.user.email, password: oldPw });
+    if (error) throw new Error('目前密碼不正確');
+    chk(await sb.auth.updateUser({ password: newPw }));
+  },
+
+  // ===== 日報表 =====
+  async getReportSettings() { return chk(await sb.from('report_settings').select('*').eq('id', 1).single()); },
+  async saveReportSettings(patch) {
+    chk(await sb.from('report_settings').update({ ...patch, updated_at: new Date().toISOString(), updated_by: await myId() }).eq('id', 1));
+  },
+  async listReportRuns() { return chk(await sb.from('report_runs').select('*').order('run_at', { ascending: false }).limit(30)); },
+  async sendReportNow(day, to) {
+    const { data, error } = await sb.functions.invoke('daily-report', { body: { day, to } });
+    if (error) {
+      let msg = error.message;
+      try { msg = (await error.context.json()).error || msg; } catch { /* 保留原訊息 */ }
+      throw new Error(msg);
+    }
+    return data;
+  },
+  async reportData(day) {
+    const st = await api.getReportSettings();
+    const startHour = st?.day_start_hour ?? 6;
+    const { from, to } = dutyWindow(day, startHour);
+    const F = from.toISOString(), T = to.toISOString();
+    const [patrols, incidents, sos, routes, cps] = await Promise.all([
+      sb.from('patrols').select(`*, scans(status,flags,server_at), ${prof('patrols')}`).gte('started_at', F).lt('started_at', T).order('started_at').then(chk),
+      sb.from('incidents').select(`*, ${prof('incidents')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
+      sb.from('sos_alerts').select(`*, ${prof('sos_alerts')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
+      routesWithPoints(false, false),
+      sb.from('checkpoints').select('id,code,name').then(chk)]);
+    const ids = patrols.map(p => p.id);
+    const scans = ids.length ? chk(await sb.from('scans').select(`*, checkpoint:checkpoints(${CP_COLS}), ${prof('scans')}`).in('patrol_id', ids).order('server_at')) : [];
+    return {
+      day, dayStartHour: startHour,
+      patrols: patrols.map(p => summarize(p, routes)),
+      scans: scans.map(x => ({ ...x, profile: x.profiles })),
+      incidents: incidents.map(i => ({ ...i, profile: i.profiles })),
+      sos: sos.map(x => ({ ...x, profile: x.profiles })),
+      checkpointNames: Object.fromEntries(cps.map(c => [c.id, `${c.code} ${c.name}`])),
+    };
+  },
 
   subscribe(cb) {
     const ch = sb.channel('admin-live')

@@ -518,3 +518,37 @@ create policy "patrol photos read" on storage.objects for select to authenticate
 do $$ begin
   alter publication supabase_realtime add table public.sos_alerts, public.incidents, public.scans, public.patrols;
 exception when others then null; end $$;
+
+-- ---------- 每日巡查日報表 ----------
+create table if not exists public.report_settings (
+  id int primary key default 1 check (id = 1),
+  enabled boolean not null default false,
+  recipients text[] not null default '{}',
+  send_hour int not null default 7 check (send_hour between 0 and 23),
+  day_start_hour int not null default 6 check (day_start_hour between 0 and 23),
+  updated_at timestamptz not null default now(),
+  updated_by uuid references public.profiles(id)
+);
+insert into public.report_settings (id) values (1) on conflict (id) do nothing;
+
+create table if not exists public.report_runs (
+  id bigserial primary key,
+  report_day date not null,
+  run_at timestamptz not null default now(),
+  trigger text,
+  recipients text[],
+  status text not null check (status in ('sent','failed')),
+  error text
+);
+
+alter table public.report_settings enable row level security;
+alter table public.report_runs enable row level security;
+drop policy if exists p_rs_sel on public.report_settings;
+create policy p_rs_sel on public.report_settings for select to authenticated using (is_staff());
+drop policy if exists p_rs_upd on public.report_settings;
+create policy p_rs_upd on public.report_settings for update to authenticated using (is_admin()) with check (is_admin());
+drop policy if exists p_rr_sel on public.report_runs;
+create policy p_rr_sel on public.report_runs for select to authenticated using (is_staff());
+revoke all on public.report_settings, public.report_runs from anon, authenticated;
+grant select on public.report_settings, public.report_runs to authenticated;
+grant update (enabled, recipients, send_hour, day_start_hour, updated_at, updated_by) on public.report_settings to authenticated;

@@ -680,6 +680,13 @@ V.settings = async () => {
       <div class="small">${!canBio ? '此手機或瀏覽器不支援。iPhone 請用 Safari 並將本網站「加入主畫面」；Android 請用 Chrome。'
         : hasBio ? '已啟用。開始巡邏時需通過驗證。' : '啟用後，每次開始巡邏都需以本人指紋或臉部解鎖。'}</div>
       ${canBio ? `<button class="btn ${hasBio ? 'ghost' : 'vest'} block" id="bio">${hasBio ? '重新設定' : '啟用'}</button>` : ''}</section>
+    <section class="card stack"><b>變更密碼</b>
+      <form id="pwf" class="stack" novalidate>
+        <label class="f">目前密碼<input id="pw-old" type="password" autocomplete="current-password" required></label>
+        <label class="f">新密碼（至少 8 碼）<input id="pw-new" type="password" autocomplete="new-password" minlength="8" required></label>
+        <label class="f">再輸入一次新密碼<input id="pw-new2" type="password" autocomplete="new-password" required></label>
+        <button class="btn ghost block">變更密碼</button></form>
+      <div class="small">忘記密碼請洽班長或總務處重設。</div></section>
     <section class="card stack"><b>離線暫存</b>
       <div class="small">尚未上傳 ${S.queue.length} 筆。恢復連線後會自動上傳。</div>
       <button class="btn ghost block" id="sync" ${S.queue.length ? '' : 'disabled'}>立即上傳</button></section>
@@ -691,6 +698,14 @@ V.settings = async () => {
     <div class="small">緊急聯絡：${CONFIG.SOS_PHONES.map(p => `${esc(p.label)} <span class="mono">${esc(p.number)}</span>`).join('；')}</div>`);
   $('#bio')?.addEventListener('click', async () => {
     try { await bio.enroll(S.profile); toast('生物辨識已啟用'); go('settings'); } catch (e) { toast('設定未完成：' + e.message, 'bad'); }
+  });
+  $('#pwf').addEventListener('submit', async e => {
+    e.preventDefault();
+    const o = $('#pw-old').value, n = $('#pw-new').value;
+    if (n.length < 8) return toast('新密碼至少 8 碼', 'bad');
+    if (n !== $('#pw-new2').value) return toast('兩次輸入的新密碼不一致', 'bad');
+    if (n === o) return toast('新密碼不可與目前密碼相同', 'bad');
+    try { await api.changePassword(o, n); toast('密碼已變更，下次登入請使用新密碼'); e.target.reset(); } catch (err) { toast(err.message, 'bad'); }
   });
   $('#sync').onclick = () => sync().then(() => go('settings'));
   $('#sim')?.addEventListener('change', e => { try { localStorage.setItem('yzup-sim-gps', e.target.checked ? 'on' : 'off'); } catch { /* 略過 */ } if (S.patrol) startTracking(); });

@@ -1,9 +1,10 @@
 // 離線快取：網頁檔案優先從網路取得（確保更新），斷線時改用快取。資料庫請求不快取。
-const CACHE = 'yzu-patrol-v1';
+const CACHE = 'yzu-patrol-v2';
 const SHELL = [
   './', './index.html', './admin.html', './manifest.webmanifest', './css/style.css',
   './js/config.js', './js/api.js', './js/backend-demo.js', './js/backend-supabase.js', './js/rules.js', './js/util.js',
-  './js/idb.js', './js/camera.js', './js/biometric.js', './js/guard.js', './vendor/jsQR.js', './assets/icon.svg',
+  './js/idb.js', './js/camera.js', './js/biometric.js', './js/guard.js', './js/report.js',
+  './supabase/functions/_shared/labels.js', './supabase/functions/_shared/report.js', './vendor/jsQR.js', './assets/icon.svg',
 ];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => null)))).then(() => self.skipWaiting()));

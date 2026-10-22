@@ -29,11 +29,15 @@ export function getPosition({ timeout = 10000, maxAge = 0 } = {}) {
   });
 }
 
-export function downloadText(name, text, type = 'text/csv;charset=utf-8') {
-  const blob = new Blob(['﻿' + text], { type });
+export function downloadBlob(name, blob) {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = name; a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  a.href = URL.createObjectURL(blob); a.download = name; a.hidden = true;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+// CSV 開頭加 BOM，Excel 才會以 UTF-8 正確顯示中文
+export function downloadText(name, text, type = 'text/csv;charset=utf-8') {
+  downloadBlob(name, new Blob(['﻿' + text], { type }));
 }
 
 export const csvCell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };

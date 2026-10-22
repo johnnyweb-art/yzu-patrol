@@ -1,19 +1,7 @@
 // 防代巡判定規則。示範模式由此檔判定；正式環境由資料庫函式 submit_scan 判定，邏輯相同。
 import { CONFIG } from './config.js';
 
-export const FLAG_LABELS = {
-  OUT_OF_FENCE: '位置不在據點範圍',
-  LOW_ACCURACY: '定位精度不足',
-  NO_GPS: '無定位資料',
-  TOO_FAST: '間隔過短',
-  OUT_OF_ORDER: '未依順序',
-  DELAYED_UPLOAD: '延遲上傳',
-  CLOCK_SKEW: '手機時間異常',
-  NON_LIVE_PHOTO: '非即時拍攝',
-  UV_SKIPPED: '未通過生物辨識',
-  SELFIE_MISSED: '未完成自拍確認',
-};
-export const flagLabel = f => FLAG_LABELS[f] || f;
+export { FLAG_LABELS, flagLabel } from '../supabase/functions/_shared/labels.js';
 
 export function distanceM(lat1, lng1, lat2, lng2) {
   const R = 6371000, rad = Math.PI / 180;
