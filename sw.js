@@ -1,5 +1,5 @@
 // 離線快取：網頁檔案優先從網路取得（確保更新），斷線時改用快取。資料庫請求不快取。
-const CACHE = 'yzu-patrol-v3';
+const CACHE = 'yzu-patrol-v4';
 const SHELL = [
   './', './index.html', './admin.html', './manifest.webmanifest', './css/style.css',
   './js/config.js', './js/api.js', './js/backend-demo.js', './js/backend-supabase.js', './js/rules.js', './js/util.js',

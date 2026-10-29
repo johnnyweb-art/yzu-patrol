@@ -37,6 +37,7 @@ Deno.serve(async (req) => {
         if (!prof.active) return json({ error: '此工號已停用' }, 400);
         userId = prof.id;
         await admin.from('passkeys').update({ active: false }).eq('user_id', userId);
+        if (r.post) await admin.from('profiles').update({ post: r.post }).eq('id', userId);
       } else {
         // 臉部辨識登入不需要密碼，建立一組無人知道的隨機密碼
         const pw = crypto.randomUUID() + crypto.randomUUID();
@@ -46,7 +47,7 @@ Deno.serve(async (req) => {
         });
         if (error) return json({ error: error.message }, 400);
         userId = data.user.id;
-        await admin.from('profiles').upsert({ id: userId, staff_no: r.staff_no, name: r.name, role: 'guard', phone: r.phone });
+        await admin.from('profiles').upsert({ id: userId, staff_no: r.staff_no, name: r.name, role: 'guard', phone: r.phone, post: r.post });
       }
       // 一人一機：核准的手機成為唯一使用中的裝置
       await admin.from('devices').update({ status: 'revoked', decided_by: user.id, decided_at: new Date().toISOString() }).eq('user_id', userId).eq('status', 'active');

@@ -7,7 +7,8 @@ import { uid } from './util.js';
 import * as wa from './webauthn.js';
 import { dutyWindow, applyWindow, patrolOverlaps, DEFAULT_REPORT_SETTINGS } from './report.js';
 
-const KEY = 'yzup-demo-v1';
+// v2：加入大門／側門崗位，舊的示範資料會自動重建
+const KEY = 'yzup-demo-v2';
 // 巡邏員畫面與管理後台各自登入，在同一個瀏覽器測試兩種角色時不會互相覆蓋
 const SESSION = 'yzup-demo-session-' + (/admin\.html$/.test(location.pathname) ? 'admin' : 'guard');
 const listeners = new Set();
@@ -25,43 +26,43 @@ const CHECK = {
 
 function seed() {
   const users = [
-    { id: 'u-g1024', staff_no: 'G1024', name: '林巡員（示範）', role: 'guard', active: true, password: 'demo1234' },
-    { id: 'u-g1025', staff_no: 'G1025', name: '陳巡員（示範）', role: 'guard', active: true, password: 'demo1234' },
+    { id: 'u-g1024', staff_no: 'G1024', name: '林巡員（示範）', role: 'guard', post: '大門', active: true, password: 'demo1234' },
+    { id: 'u-g1025', staff_no: 'G1025', name: '陳巡員（示範）', role: 'guard', post: '側門', active: true, password: 'demo1234' },
     { id: 'u-s001', staff_no: 'S001', name: '王班長（示範）', role: 'supervisor', active: true, password: 'demo1234' },
     { id: 'u-a001', staff_no: 'A001', name: '總務處管理者（示範）', role: 'admin', active: true, password: 'demo1234' },
   ];
   const cps = [
-    ['P01', '行政大樓正門', '門禁', off(0, 0), true],
-    ['P02', '圖書館側門', '門禁', off(120, 90), true],
-    ['P03', '體育館周邊', '戶外', off(260, -80), true],
-    ['P04', '學生宿舍區', '宿舍', off(380, 160), true],
-    ['P05', '地下停車場 B1', '停車場', off(-90, 200), false],
-    ['P06', '配電室', '機電', off(-150, -60), false],
-  ].map(([code, name, type, pos, fence]) => ({
-    id: 'cp-' + code, code, name, type, lat: pos.lat, lng: pos.lng, radius_m: 30, enforce_fence: fence,
-    checklist: CHECK[type], min_photos: 1, active: true, note: fence ? '' : '室內點，GPS 訊號弱，不強制圍欄',
+    ['P01', '行政大樓正門', '門禁', off(0, 0), true, '大門'],
+    ['P02', '圖書館側門', '門禁', off(120, 90), true, '側門'],
+    ['P03', '體育館周邊', '戶外', off(260, -80), true, '大門'],
+    ['P04', '學生宿舍區', '宿舍', off(380, 160), true, '側門'],
+    ['P05', '地下停車場 B1', '停車場', off(-90, 200), false, '大門'],
+    ['P06', '配電室', '機電', off(-150, -60), false, '側門'],
+  ].map(([code, name, type, pos, fence, post]) => ({
+    id: 'cp-' + code, code, name, type, post, lat: pos.lat, lng: pos.lng, radius_m: 30, enforce_fence: fence,
+    checklist: CHECK[type], min_photos: 0, active: true, note: fence ? '' : '室內點，GPS 訊號弱，不強制圍欄',
     qr_token: Math.random().toString(16).slice(2, 14),
   }));
   const routes = [
-    { id: 'rt-a', name: 'A 線・校園全區', mode: 'free', active: true, point_ids: cps.map(c => c.id) },
-    { id: 'rt-b', name: 'B 線・夜間重點（依序）', mode: 'ordered', active: true, point_ids: ['cp-P01', 'cp-P02', 'cp-P06'] },
+    { id: 'rt-gate', name: '大門巡邏路線', mode: 'free', active: true, post: '大門', point_ids: cps.filter(c => c.post === '大門').map(c => c.id) },
+    { id: 'rt-side', name: '側門巡邏路線', mode: 'free', active: true, post: '側門', point_ids: cps.filter(c => c.post === '側門').map(c => c.id) },
   ];
   const d = { users, devices: [], checkpoints: cps, routes, patrols: [], scans: [], incidents: [], sos: [], track: [], selfies: [] };
   // 兩筆過去的示例巡邏，讓後台一開始就有資料可看
   const day = 86400000, now = Date.now();
-  [[2, 'u-g1024', 0], [1, 'u-g1025', 1]].forEach(([ago, user, variant]) => {
+  [[2, 'u-g1024', 0, 'rt-gate', '大門'], [1, 'u-g1025', 1, 'rt-side', '側門']].forEach(([ago, user, variant, routeId, post]) => {
     const start = new Date(now - ago * day - 3 * 3600000);
-    const p = { id: uid(), user_id: user, device_id: 'sample', route_id: 'rt-a', shift: CONFIG.SHIFTS[0], weather: '晴', started_at: start.toISOString(),
+    const p = { id: uid(), user_id: user, device_id: 'sample', route_id: routeId, post, shift: null, weather: null, started_at: start.toISOString(),
       ended_at: new Date(+start + 55 * 60000).toISOString(), status: 'ended', uv_ok: true, flags: [], missed: [], handover_items: {}, handover_note: '示例資料',
       selfie_status: 'ok', start_lat: BASE.lat, start_lng: BASE.lng, is_sample: true };
     d.patrols.push(p);
-    cps.forEach((cp, i) => {
-      if (variant === 1 && i === 4) { p.missed.push({ checkpoint_id: cp.id, reason: '施工封閉' }); return; }
+    cps.filter(cp => cp.post === post).forEach((cp, i) => {
+      if (variant === 1 && i === 2) { p.missed.push({ checkpoint_id: cp.id, reason: '施工封閉' }); return; }
       const t = new Date(+start + (i + 1) * 8 * 60000).toISOString();
       const abn = variant === 0 && i === 1;
       d.scans.push({ id: uid(), patrol_id: p.id, user_id: user, checkpoint_id: cp.id, server_at: t, device_at: t, lat: cp.lat, lng: cp.lng, accuracy: 8, distance_m: 4,
         status: abn ? 'abnormal' : 'normal', checklist: Object.fromEntries(cp.checklist.map((c, k) => [c, !(abn && k === 0)])),
-        category: abn ? '門窗未鎖' : '', severity: abn ? '中' : '', note: abn ? '示例：側門未上鎖，已關閉' : '', photo_paths: [], photo_hashes: [],
+        category: abn ? '門窗沒鎖' : '', severity: abn ? '中' : '', note: abn ? '示例：側門未上鎖，已關閉' : '', photo_paths: [], photo_hashes: [],
         flags: [], review_status: 'none', is_sample: true });
     });
   });
@@ -83,7 +84,7 @@ function me() {
   if (!u) throw new Error('請重新登入');
   return u;
 }
-const pub = u => u && ({ id: u.id, staff_no: u.staff_no, name: u.name, role: u.role, active: u.active });
+const pub = u => u && ({ id: u.id, staff_no: u.staff_no, name: u.name, role: u.role, active: u.active, post: u.post || null });
 const isStaff = u => ['supervisor', 'admin'].includes(u.role);
 function needStaff() { const u = me(); if (!isStaff(u)) throw new Error('權限不足'); return u; }
 function needAdmin() { const u = me(); if (u.role !== 'admin') throw new Error('僅限管理者'); return u; }
@@ -101,7 +102,7 @@ function patrolSummary(d, p) {
   const r = d.routes.find(x => x.id === p.route_id);
   const sc = d.scans.filter(s => s.patrol_id === p.id);
   return { ...p, route_name: r?.name || '', point_count: r?.point_ids.length || 0, scan_count: sc.length,
-    abnormal_count: sc.filter(s => s.status === 'abnormal').length, flagged_count: sc.filter(s => s.flags.length).length,
+    abnormal_count: sc.filter(s => s.status === 'abnormal').length + d.incidents.filter(i => i.patrol_id === p.id).length, flagged_count: sc.filter(s => s.flags.length).length,
     last_scan_at: sc.map(s => s.server_at).sort().pop() || null, profile: pub(d.users.find(u => u.id === p.user_id)) };
 }
 
@@ -139,8 +140,9 @@ export const api = {
   },
 
   async getRoutes() {
-    me(); const d = load();
-    return d.routes.filter(r => r.active).map(r => routeWithPoints(d, r));
+    const u = me(), d = load();
+    // 巡邏員只看到自己崗位的路線；未標記崗位的路線兩邊共用
+    return d.routes.filter(r => r.active && (isStaff(u) || !r.post || !u.post || r.post === u.post)).map(r => routeWithPoints(d, r));
   },
 
   async getActivePatrol() {
@@ -156,7 +158,8 @@ export const api = {
     if (!d.devices.some(x => x.user_id === u.id && x.device_id === deviceId && x.status === 'active')) throw new Error('此裝置未獲授權，請洽主管');
     const ex = d.patrols.find(x => x.user_id === u.id && x.status === 'active');
     if (ex) return ex;
-    const p = { id: uid(), user_id: u.id, device_id: deviceId, route_id: routeId, shift, weather, started_at: nowIso(), ended_at: null, status: 'active',
+    const post = d.routes.find(r => r.id === routeId)?.post || u.post || null;
+    const p = { id: uid(), user_id: u.id, device_id: deviceId, route_id: routeId, post, shift: shift || null, weather: weather || null, started_at: nowIso(), ended_at: null, status: 'active',
       uv_ok: !!uvOk, flags: uvOk ? [] : ['UV_SKIPPED'], missed: [], handover_items: {}, handover_note: '', selfie_status: 'none', start_lat: lat, start_lng: lng };
     d.patrols.push(p); save(d);
     return p;
@@ -187,7 +190,7 @@ export const api = {
     const mine = d.scans.filter(s => s.patrol_id === p.id);
     if (mine.some(s => s.checkpoint_id === cp.id)) throw new Error('此據點本場次已完成');
     if (!['normal', 'abnormal'].includes(x.status)) throw new Error('狀態不正確');
-    if (x.status === 'abnormal' && !String(x.note || '').trim()) throw new Error('異常需填寫說明');
+    if (x.status === 'abnormal' && !String(x.note || '').trim() && !String(x.category || '').trim()) throw new Error('異常需選擇類別或填寫說明');
     if ((x.photoPaths || []).length < cp.min_photos) throw new Error('照片數量不足');
     const prev = [...mine].sort((a, b) => new Date(a.device_at || a.server_at) - new Date(b.device_at || b.server_at)).pop();
     let res;
@@ -237,8 +240,6 @@ export const api = {
     if (!p || p.status !== 'active') throw new Error('此巡邏已結束或不存在');
     const route = d.routes.find(r => r.id === p.route_id);
     const done = d.scans.filter(s => s.patrol_id === p.id).map(s => s.checkpoint_id);
-    const lack = (route?.point_ids || []).filter(id => !done.includes(id) && !missed.some(m => m.checkpoint_id === id && m.reason));
-    if (lack.length) throw new Error('未巡據點須填寫原因');
     Object.assign(p, { status: 'ended', ended_at: nowIso(), missed, handover_items: handoverItems, handover_note: handoverNote, selfie_status: selfieStatus });
     if (selfieStatus === 'missed' && !p.flags.includes('SELFIE_MISSED')) p.flags.push('SELFIE_MISSED');
     save(d);
@@ -280,7 +281,7 @@ export const api = {
       pendingSelfies: d.selfies.filter(x => x.result === 'pending').length,
       pendingRegistrations: (d.registrations || []).filter(x => x.status === 'pending').length,
       today: { patrols: d.patrols.filter(p => isToday(p.started_at)).length, scans: scansToday.length,
-        abnormal: scansToday.filter(s => s.status === 'abnormal').length, flagged: scansToday.filter(s => s.flags.length).length },
+        abnormal: scansToday.filter(s => s.status === 'abnormal').length + d.incidents.filter(i => isToday(i.created_at)).length, flagged: scansToday.filter(s => s.flags.length).length },
     };
   },
 
@@ -288,7 +289,7 @@ export const api = {
   async updateProfile(id, patch) {
     needAdmin(); const d = load();
     const u = d.users.find(x => x.id === id);
-    Object.assign(u, (({ name, role, active }) => Object.fromEntries(Object.entries({ name, role, active }).filter(([, v]) => v !== undefined)))(patch));
+    Object.assign(u, (({ name, role, active, post }) => Object.fromEntries(Object.entries({ name, role, active, post }).filter(([, v]) => v !== undefined)))(patch));
     save(d);
   },
   async createUser({ staff_no, name, role, password }) {
@@ -322,9 +323,9 @@ export const api = {
   async rotateToken(id) { needAdmin(); const d = load(); d.checkpoints.find(c => c.id === id).qr_token = Math.random().toString(16).slice(2, 14); save(d); },
 
   async adminRoutes() { needStaff(); const d = load(); return d.routes.map(r => routeWithPoints(d, r, true)); },
-  async saveRoute({ id, name, mode, active, pointIds }) {
+  async saveRoute({ id, name, mode, active, pointIds, post }) {
     needAdmin(); const d = load();
-    const r = { name, mode, active, point_ids: pointIds };
+    const r = { name, mode, active, post: post || null, point_ids: pointIds };
     if (id) Object.assign(d.routes.find(x => x.id === id), r); else d.routes.push({ id: 'rt-' + uid(), ...r });
     save(d);
   },
@@ -381,7 +382,7 @@ export const api = {
   },
 
   // ===== 自行註冊與臉部辨識登入（示範模式：簽章只在手機端確認） =====
-  async passkeyRegister({ staff_no, name, phone, org, deviceId, deviceLabel, simulate }) {
+  async passkeyRegister({ staff_no, name, phone, org, post, deviceId, deviceLabel, simulate }) {
     staff_no = String(staff_no).trim().toUpperCase(); name = String(name).trim();
     if (!/^[A-Z0-9_-]{2,20}$/.test(staff_no)) throw new Error('工號格式不正確（英文字母或數字，2–20 碼）');
     if (!name) throw new Error('請填寫姓名');
@@ -396,7 +397,7 @@ export const api = {
     const ex = d.users.find(u => u.staff_no === staff_no);
     if (ex && !ex.active) throw new Error('此工號已停用，請洽總務處');
     d.registrations = d.registrations.filter(r => !(r.staff_no === staff_no && r.status === 'pending'));
-    const r = { id: uid(), kind: ex ? 'rebind' : 'new', staff_no, name, phone: phone || '', org: org || '', device_id: deviceId, device_label: deviceLabel,
+    const r = { id: uid(), kind: ex ? 'rebind' : 'new', staff_no, name, phone: phone || '', org: org || '', post: post || null, device_id: deviceId, device_label: deviceLabel,
       credential_id: credentialId, consent_at: nowIso(), status: 'pending', created_at: nowIso() };
     d.registrations.push(r); save(d);
     return { requestId: r.id, credentialId };
@@ -430,7 +431,8 @@ export const api = {
     const r = (d.registrations || []).find(x => x.id === id);
     if (!r || r.status !== 'pending') throw new Error('此申請已處理或不存在');
     let u = d.users.find(x => x.staff_no === r.staff_no);
-    if (!u) { u = { id: 'u-' + uid(), staff_no: r.staff_no, name: r.name, role: 'guard', active: true, password: null }; d.users.push(u); }
+    if (!u) { u = { id: 'u-' + uid(), staff_no: r.staff_no, name: r.name, role: 'guard', post: r.post, active: true, password: null }; d.users.push(u); }
+    else if (r.post) u.post = r.post;
     d.passkeys ||= [];
     d.passkeys.filter(x => x.user_id === u.id).forEach(x => (x.active = false));
     d.passkeys.push({ id: uid(), user_id: u.id, device_id: r.device_id, credential_id: r.credential_id, active: true, created_at: nowIso() });

@@ -65,6 +65,7 @@ Deno.serve(async (req) => {
         await db.from('registration_requests').delete().eq('staff_no', staff_no).eq('status', 'pending');
         const { data, error } = await db.from('registration_requests').insert({
           kind: existing ? 'rebind' : 'new', staff_no, name, phone: String(b.phone ?? '').slice(0, 30) || null, org: String(b.org ?? '').slice(0, 60) || null,
+          post: String(b.post ?? '').slice(0, 20) || null,
           device_id: String(b.device_id).slice(0, 80), device_label: String(b.device_label ?? '').slice(0, 120),
           credential_id: cred.credentialId, public_key: cred.publicKey, counter: cred.counter, transports: cred.transports,
           consent_at: new Date().toISOString(),

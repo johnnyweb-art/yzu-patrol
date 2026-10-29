@@ -274,7 +274,7 @@ begin
     raise exception '此據點本場次已完成';
   end if;
   if p_status not in ('normal','abnormal') then raise exception '狀態不正確'; end if;
-  if p_status = 'abnormal' and coalesce(btrim(p_note), '') = '' then raise exception '異常需填寫說明'; end if;
+  if p_status = 'abnormal' and coalesce(btrim(p_note), '') = '' and coalesce(btrim(p_category), '') = '' then raise exception '異常需選擇類別或填寫說明'; end if;
   if coalesce(array_length(p_photo_paths, 1), 0) < v_cp.min_photos then raise exception '照片數量不足'; end if;
   if exists (select 1 from unnest(coalesce(p_photo_paths, '{}')) x where split_part(x, '/', 1) <> auth.uid()::text) then
     raise exception '照片路徑不正確';
@@ -341,13 +341,7 @@ declare v_p patrols;
 begin
   select * into v_p from patrols where id = p_patrol_id and user_id = auth.uid();
   if not found or v_p.status <> 'active' then raise exception '此巡邏已結束或不存在'; end if;
-  if exists (
-    select 1 from route_points rp
-    where rp.route_id = v_p.route_id
-      and not exists (select 1 from scans s where s.patrol_id = v_p.id and s.checkpoint_id = rp.checkpoint_id)
-      and not exists (select 1 from jsonb_array_elements(coalesce(p_missed, '[]'::jsonb)) m
-                      where m->>'checkpoint_id' = rp.checkpoint_id::text and coalesce(m->>'reason', '') <> '')
-  ) then raise exception '未巡據點須填寫原因'; end if;
+  -- 未巡據點原因為選填（總務處要求操作越簡單越好），系統仍記錄哪些據點未巡
   update patrols set status = 'ended', ended_at = now(), missed = coalesce(p_missed, '[]'::jsonb),
          handover_items = coalesce(p_handover_items, '{}'::jsonb), handover_note = p_note,
          selfie_status = coalesce(p_selfie_status, 'none'),
@@ -374,15 +368,16 @@ begin
   return v;
 end $$;
 
-create or replace function public.save_route(p_id uuid, p_name text, p_mode text, p_active boolean, p_point_ids uuid[])
+drop function if exists public.save_route(uuid, text, text, boolean, uuid[], text);
+create or replace function public.save_route(p_id uuid, p_name text, p_mode text, p_active boolean, p_point_ids uuid[], p_post text default null)
 returns uuid language plpgsql security definer set search_path = public as $$
 declare v_id uuid := p_id;
 begin
   if not is_admin() then raise exception '僅限管理者'; end if;
   if v_id is null then
-    insert into routes (name, mode, active) values (p_name, p_mode, p_active) returning id into v_id;
+    insert into routes (name, mode, active, post) values (p_name, p_mode, p_active, nullif(p_post, '')) returning id into v_id;
   else
-    update routes set name = p_name, mode = p_mode, active = p_active where id = v_id;
+    update routes set name = p_name, mode = p_mode, active = p_active, post = nullif(p_post, '') where id = v_id;
     delete from route_points where route_id = v_id;
   end if;
   insert into route_points (route_id, checkpoint_id, seq)
@@ -499,11 +494,11 @@ grant update (result, reviewed_by) on public.selfies to authenticated;
 revoke execute on function public.register_device(text, text), public.start_patrol(uuid, text, text, text, double precision, double precision, boolean),
   public.submit_scan(uuid, text, text, text, double precision, double precision, double precision, timestamptz, text, jsonb, text, text, text, text[], text[], text[]),
   public.end_patrol(uuid, jsonb, jsonb, text, text), public.admin_checkpoints(), public.rotate_qr_token(uuid),
-  public.save_route(uuid, text, text, boolean, uuid[]), public.set_device_status(uuid, text) from public, anon;
+  public.save_route(uuid, text, text, boolean, uuid[], text), public.set_device_status(uuid, text) from public, anon;
 grant execute on function public.register_device(text, text), public.start_patrol(uuid, text, text, text, double precision, double precision, boolean),
   public.submit_scan(uuid, text, text, text, double precision, double precision, double precision, timestamptz, text, jsonb, text, text, text, text[], text[], text[]),
   public.end_patrol(uuid, jsonb, jsonb, text, text), public.admin_checkpoints(), public.rotate_qr_token(uuid),
-  public.save_route(uuid, text, text, boolean, uuid[]), public.set_device_status(uuid, text) to authenticated;
+  public.save_route(uuid, text, text, boolean, uuid[], text), public.set_device_status(uuid, text) to authenticated;
 
 -- ---------- 照片儲存空間（私有，只能新增、不能修改或刪除） ----------
 insert into storage.buckets (id, name, public) values ('patrol-photos', 'patrol-photos', false) on conflict (id) do nothing;
@@ -631,9 +626,25 @@ begin
   if found then return v_row; end if;
   select exists (select 1 from devices where user_id = auth.uid() and device_id = p_device_id
                  and last_uv_at > now() - interval '15 minutes') into v_uv;
-  insert into patrols (user_id, device_id, route_id, shift, weather, start_lat, start_lng, uv_ok, flags)
+  insert into patrols (user_id, device_id, route_id, shift, weather, start_lat, start_lng, uv_ok, flags, post)
   values (auth.uid(), p_device_id, p_route_id, p_shift, p_weather, p_lat, p_lng, v_uv,
-          case when v_uv then '{}'::text[] else array['UV_SKIPPED'] end)
+          case when v_uv then '{}'::text[] else array['UV_SKIPPED'] end,
+          coalesce((select post from routes where id = p_route_id), (select post from profiles where id = auth.uid())))
   returning * into v_row;
   return v_row;
 end $$;
+
+-- ---------- 崗位（大門駐衛警／側門駐衛警）----------
+-- 據點、路線、人員都可標記崗位；空白代表兩個崗位共用
+alter table public.profiles add column if not exists post text;
+alter table public.registration_requests add column if not exists post text;
+alter table public.checkpoints add column if not exists post text;
+alter table public.routes add column if not exists post text;
+alter table public.patrols add column if not exists post text;
+-- 預設不強制拍照，簡化巡邏員操作；需要照片的據點可在後台個別設定
+alter table public.checkpoints alter column min_photos set default 0;
+
+grant select (post) on public.checkpoints to authenticated;
+grant insert (post), update (post) on public.checkpoints to authenticated;
+grant update (post) on public.profiles to authenticated;
+grant select (post) on public.registration_requests to authenticated;

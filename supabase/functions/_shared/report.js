@@ -66,7 +66,8 @@ export function summarize(data) {
   return {
     patrols: patrols.length, ended: ended.length, active: patrols.length - ended.length,
     completion: pct(done, total), done, total, missed,
-    abnormal: scans.filter(s => s.status === 'abnormal').length,
+    // 異常回報：定點巡查標記的異常＋巡邏員按「回報異常」送出的事件
+    abnormal: scans.filter(s => s.status === 'abnormal').length + incidents.length,
     flagged: scans.filter(s => s.flags?.length).length,
     pendingReview: scans.filter(s => s.review_status === 'pending').length,
     rejected: scans.filter(s => s.review_status === 'rejected').length,
@@ -87,18 +88,26 @@ export function reportTables(data) {
     ['出勤巡邏人數', `${s.guards} 人`],
     ['據點完成率', `${s.completion}（${s.done}/${s.total}）`],
     ['未巡據點', `${s.missed} 處`],
-    ['異常件數', `${s.abnormal} 件`],
+    ['異常回報', `${s.abnormal} 件（未處理完成 ${s.openIncidents} 件）`],
     ['防代巡註記', `${s.flagged} 筆（待覆核 ${s.pendingReview}、退回 ${s.rejected}）`],
-    ['事件回報', `${s.incidents} 件（未結案 ${s.openIncidents}）`],
     ['SOS 求援', `${s.sos} 次`],
   ];
+  // 各崗位（大門、側門）分開統計
+  const posts = [...new Set(patrols.map(p => p.post).filter(Boolean))];
+  if (posts.length > 1) for (const post of posts) {
+    const ps = patrols.filter(p => p.post === post);
+    const d = ps.reduce((a, p) => a + p.scan_count, 0), t = ps.reduce((a, p) => a + p.point_count, 0);
+    summary.splice(5 + posts.indexOf(post), 0, [`　${post}`, `${ps.length} 場、完成率 ${pct(d, t)}（${d}/${t}）`]);
+  }
+  const incOf = id => incidents.filter(i => i.patrol_id === id).length;
   const patrolT = {
-    head: ['日期', '工號', '姓名', '班別', '路線', '開始', '結束', '完成據點', '應巡據點', '異常', '未巡據點與原因', '註記', '天候', '交接事項'],
+    head: ['日期', '崗位', '工號', '姓名', '路線', '開始', '結束', '完成據點', '應巡據點', '異常回報', '未巡據點', '註記', '交接事項'],
     rows: patrols.map(p => {
       const tm = iso => p.cross_day ? fmtDT(iso) : fmtTime(iso);
-      return [fmtDate(p.started_at), p.profile?.staff_no, p.profile?.name, p.shift, p.route_name, tm(p.started_at), p.ended_at ? tm(p.ended_at) : '進行中',
-        p.scan_count, p.point_count, p.abnormal_count, p.ended_in_window === false ? '' : (p.missed || []).map(m => `${checkpointNames[m.checkpoint_id] || ''}：${m.reason}`).join('；'),
-        [...(p.cross_day ? ['跨日巡邏（完成據點只計本日）'] : []), ...(p.flags || []).map(flagLabel)].join('、'), p.weather, p.handover_note];
+      return [fmtDate(p.started_at), p.post || '', p.profile?.staff_no, p.profile?.name, p.route_name, tm(p.started_at), p.ended_at ? tm(p.ended_at) : '進行中',
+        p.scan_count, p.point_count, p.abnormal_count + incOf(p.id),
+        p.ended_in_window === false ? '' : (p.missed || []).map(m => `${checkpointNames[m.checkpoint_id] || ''}${m.reason ? `（${m.reason}）` : ''}`).join('、'),
+        [...(p.cross_day ? ['跨日巡邏（完成據點只計本日）'] : []), ...(p.flags || []).map(flagLabel)].join('、'), p.handover_note];
     }),
   };
   const scanT = {
@@ -110,7 +119,7 @@ export function reportTables(data) {
     head: ['時間', '來源', '地點／類型', '嚴重度', '說明', '回報人', '處理狀態'],
     rows: [
       ...scans.filter(x => x.status === 'abnormal').map(x => [x.server_at, '定點巡查', `${x.checkpoint?.code} ${x.checkpoint?.name}・${x.category}`, x.severity, x.note, x.profile?.name, '']),
-      ...incidents.map(i => [i.created_at, '事件回報', i.type, i.severity, i.description, i.profile?.name, INCIDENT_STATUS[i.status] || i.status]),
+      ...incidents.map(i => [i.created_at, '異常回報', i.type, i.severity, i.description, i.profile?.name, INCIDENT_STATUS[i.status] || i.status]),
       ...sos.map(x => [x.created_at, 'SOS', x.lat != null ? `${x.lat.toFixed(5)}, ${x.lng.toFixed(5)}` : '無定位', '緊急', '', x.profile?.name, x.acknowledged_at ? '已處理' : '未處理']),
     ].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(r => [fmtDT(r[0]), ...r.slice(1)]),
   };
@@ -138,7 +147,7 @@ export async function buildWorkbook(ExcelJS, data, orgName = '') {
   ws.getRow(1).font = { bold: true, size: 14 };
   ws.getRow(1).getCell(1).border = {};
   ws.views = [{}];
-  sheet('巡邏場次', t.patrolT.head, t.patrolT.rows, [11, 9, 12, 16, 18, 7, 7, 9, 9, 6, 30, 20, 7, 24]);
+  sheet('巡邏場次', t.patrolT.head, t.patrolT.rows, [11, 7, 9, 12, 18, 7, 7, 9, 9, 9, 30, 20, 24]);
   sheet('異常與事件', t.issueT.head, t.issueT.rows, [17, 10, 28, 8, 36, 12, 10]);
   sheet('定點紀錄明細', t.scanT.head, t.scanT.rows, [17, 9, 12, 9, 16, 7, 12, 8, 30, 10, 20, 9, 24, 7]);
   return wb;
@@ -154,12 +163,12 @@ export function emailHtml(data, orgName = '') {
   const td = 'style="border:1px solid #999;padding:6px 10px;vertical-align:top"';
   const th = 'style="border:1px solid #999;padding:6px 10px;text-align:left;font-weight:bold"';
   const table = (head, rows) => `<table style="border-collapse:collapse;font-size:14px">${head ? `<tr>${head.map(h => `<th ${th}>${esc(h)}</th>`).join('')}</tr>` : ''}${rows.map(r => `<tr>${r.map(v => `<td ${td}>${esc(v)}</td>`).join('')}</tr>`).join('')}</table>`;
-  const missed = t.patrolT.rows.filter(r => r[10]).map(r => [r[2], r[3], r[10]]);
+  const missed = t.patrolT.rows.filter(r => r[10]).map(r => [r[3], r[1], r[10]]);
   return `<div style="font-family:'Microsoft JhengHei','PingFang TC',sans-serif;color:#16222b">
     <h2 style="margin:0 0 12px">${esc(orgName)}校園巡查日報表　${esc(data.day)}</h2>
     ${table(null, t.summary)}
     <h3>異常與事件（${t.issueT.rows.length} 件）</h3>
     ${t.issueT.rows.length ? table(t.issueT.head, t.issueT.rows) : '<p>本勤務日無異常與事件。</p>'}
-    ${missed.length ? `<h3>未巡據點</h3>${table(['姓名', '班別', '據點與原因'], missed)}` : ''}
+    ${missed.length ? `<h3>未巡據點</h3>${table(['姓名', '崗位', '未巡據點'], missed)}` : ''}
     <p style="color:#5b6b70;font-size:13px">完整明細請見附件 Excel。待覆核紀錄請登入管理後台處理。本信由系統自動寄出。</p></div>`;
 }

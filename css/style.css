@@ -100,6 +100,42 @@ textarea { resize: vertical; }
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
 .photo-grid img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; background: var(--chip); cursor: zoom-in; }
 
+/* ===== 巡邏員：大字、大按鈕（長輩友善） ===== */
+.app { font-size: 17px; }
+.app .btn { font-size: 17px; }
+.btn.big { min-height: 58px; font-size: 18px; }
+.btn.huge { min-height: 76px; font-size: 22px; border-radius: 16px; letter-spacing: .04em; }
+.btn.danger-outline { border-color: var(--bad); color: var(--bad); }
+.app input, .app select, .app textarea { font-size: 17px; padding: 12px; }
+.hello { font-size: 26px; }
+.post-tag { display: inline-block; font-weight: 700; color: var(--vest); font-size: 16px; }
+.bigclock { font-size: 44px; font-weight: 600; line-height: 1.1; letter-spacing: .02em; }
+.count { font-size: 20px; }
+.count b { font-size: 44px; font-family: var(--f-disp); color: var(--vest); }
+.count.center { text-align: center; }
+.prog.big { height: 14px; }
+.pts.big .pt { padding: 14px; font-size: 17px; }
+.pts.big .st { font-size: 15px; }
+.choices { display: flex; flex-wrap: wrap; gap: 10px; }
+.choices.col { flex-direction: column; }
+.choices.grid { display: grid; grid-template-columns: 1fr 1fr; }
+.choice { position: relative; flex: 1 1 0; min-width: 0; }
+.choice input { position: absolute; opacity: 0; pointer-events: none; }
+.choice span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 60px; padding: 10px; border: 2px solid var(--line);
+  border-radius: 14px; font-weight: 700; font-size: 18px; background: var(--surface); cursor: pointer; }
+.choice.sm span { min-height: 44px; font-size: 15px; font-weight: 500; }
+.choice input:checked + span { border-color: var(--vest); background: var(--chip); color: var(--vest); }
+.choice input:checked + span::before { content: "✓ "; }
+.choice input:focus-visible + span { outline: 3px solid var(--vest); outline-offset: 2px; }
+.agree { display: flex; gap: 12px; align-items: center; font-size: 18px; font-weight: 700; }
+.agree input { width: 28px; height: 28px; accent-color: var(--vest); }
+.donebox { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; padding-block: 12px; }
+.donebox h2 { font-size: 26px; }
+.tick { width: 112px; height: 112px; border-radius: 50%; background: var(--ok); color: #fff; font-size: 68px; line-height: 112px; font-weight: 700; }
+.miss.marked { opacity: .7; border-style: dashed; }
+.btn:disabled.huge { opacity: 1; background: var(--chip); color: var(--muted); }
+.ok-banner { background: var(--chip); color: var(--ok); font-weight: 700; justify-content: center; text-align: center; }
+
 /* ===== 管理後台 ===== */
 .admin { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 100dvh; }
 .side { background: var(--surface); border-right: 1px solid var(--line); padding: 20px 14px; display: flex; flex-direction: column; gap: 4px; }

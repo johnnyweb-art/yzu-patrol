@@ -6,8 +6,8 @@ import * as wa from './webauthn.js';
 import { dutyWindow, applyWindow, patrolOverlaps, DEFAULT_REPORT_SETTINGS } from './report.js';
 
 const sb = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
-const CP_COLS = 'id,code,name,type,lat,lng,radius_m,enforce_fence,checklist,min_photos,active,note';
-const prof = t => `profiles!${t}_user_id_fkey(id,staff_no,name,role,active)`;
+const CP_COLS = 'id,code,name,type,post,lat,lng,radius_m,enforce_fence,checklist,min_photos,active,note';
+const prof = t => `profiles!${t}_user_id_fkey(id,staff_no,name,role,active,post)`;
 
 function chk({ data, error }) {
   if (error) {
@@ -26,13 +26,13 @@ const dayStart = d => d ? new Date(d + 'T00:00:00').toISOString() : null;
 const dayEnd = d => d ? new Date(d + 'T23:59:59.999').toISOString() : null;
 
 async function routesWithPoints(onlyActive, withToken) {
-  let q = sb.from('routes').select('id,name,mode,active,route_points(seq,checkpoint_id)').order('name');
+  let q = sb.from('routes').select('id,name,mode,active,post,route_points(seq,checkpoint_id)').order('name');
   if (onlyActive) q = q.eq('active', true);
   const routes = chk(await q);
   const cps = withToken ? chk(await sb.rpc('admin_checkpoints')) : chk(await sb.from('checkpoints').select(CP_COLS));
   const byId = Object.fromEntries(cps.map(c => [c.id, c]));
   return routes.map(r => ({
-    id: r.id, name: r.name, mode: r.mode, active: r.active,
+    id: r.id, name: r.name, mode: r.mode, active: r.active, post: r.post,
     point_ids: r.route_points.sort((a, b) => a.seq - b.seq).map(p => p.checkpoint_id),
     points: r.route_points.sort((a, b) => a.seq - b.seq).map(p => byId[p.checkpoint_id]).filter(Boolean),
   }));
@@ -42,7 +42,7 @@ function summarize(p, routes) {
   const r = routes.find(x => x.id === p.route_id);
   const sc = p.scans || [];
   return { ...p, scans: undefined, route_name: r?.name || '', point_count: r?.point_ids.length || 0, scan_count: sc.length,
-    abnormal_count: sc.filter(s => s.status === 'abnormal').length, flagged_count: sc.filter(s => s.flags?.length).length,
+    abnormal_count: sc.filter(s => s.status === 'abnormal').length + (p.incidents || []).length, flagged_count: sc.filter(s => s.flags?.length).length,
     last_scan_at: sc.map(s => s.server_at).sort().pop() || null, profile: p.profiles, profiles: undefined };
 }
 
@@ -61,12 +61,17 @@ export const api = {
   async currentProfile() {
     const { data } = await sb.auth.getSession();
     if (!data.session) return null;
-    const { data: p } = await sb.from('profiles').select('id,staff_no,name,role,active').eq('id', data.session.user.id).maybeSingle();
+    const { data: p } = await sb.from('profiles').select('id,staff_no,name,role,active,post').eq('id', data.session.user.id).maybeSingle();
     return p && p.active ? p : null;
   },
 
   async registerDevice(deviceId, label) { return chk(await sb.rpc('register_device', { p_device_id: deviceId, p_label: label })); },
-  getRoutes: () => routesWithPoints(true, false),
+  async getRoutes() {
+    // 巡邏員只看到自己崗位的路線；未標記崗位的路線兩邊共用
+    const [me, routes] = await Promise.all([api.currentProfile(), routesWithPoints(true, false)]);
+    const staff = ['supervisor', 'admin'].includes(me?.role);
+    return routes.filter(r => staff || !r.post || !me?.post || r.post === me.post);
+  },
 
   async getActivePatrol() {
     const id = await myId();
@@ -119,13 +124,13 @@ export const api = {
   async myPatrols(limit = 30) {
     const id = await myId();
     const [rows, routes] = await Promise.all([
-      sb.from('patrols').select(`*, scans(status,flags,server_at), ${prof('patrols')}`).eq('user_id', id).order('started_at', { ascending: false }).limit(limit).then(chk),
+      sb.from('patrols').select(`*, scans(status,flags,server_at), incidents(id), ${prof('patrols')}`).eq('user_id', id).order('started_at', { ascending: false }).limit(limit).then(chk),
       routesWithPoints(false, false)]);
     return rows.map(p => summarize(p, routes));
   },
 
   async patrolDetail(id) {
-    const p = chk(await sb.from('patrols').select(`*, scans(status,flags,server_at), ${prof('patrols')}`).eq('id', id).single());
+    const p = chk(await sb.from('patrols').select(`*, scans(status,flags,server_at), incidents(id), ${prof('patrols')}`).eq('id', id).single());
     const routes = await routesWithPoints(false, false);
     const [scans, incidents, track, selfies] = await Promise.all([
       sb.from('scans').select(`*, checkpoint:checkpoints(${CP_COLS})`).eq('patrol_id', id).order('server_at').then(chk),
@@ -139,8 +144,8 @@ export const api = {
   async dashboard() {
     const t0 = new Date(); t0.setHours(0, 0, 0, 0);
     const today = t0.toISOString();
-    const [active, sos, inc, pend, devs, selfies, regs, tp, ts, routes] = await Promise.all([
-      sb.from('patrols').select(`*, scans(status,flags,server_at), ${prof('patrols')}`).eq('status', 'active').then(chk),
+    const [active, sos, inc, pend, devs, selfies, regs, tp, ts, ti, routes] = await Promise.all([
+      sb.from('patrols').select(`*, scans(status,flags,server_at), incidents(id), ${prof('patrols')}`).eq('status', 'active').then(chk),
       sb.from('sos_alerts').select(`*, ${prof('sos_alerts')}`).is('acknowledged_at', null).order('created_at', { ascending: false }).then(chk),
       sb.from('incidents').select(`*, ${prof('incidents')}`).neq('status', 'closed').order('created_at', { ascending: false }).then(chk),
       sb.from('scans').select('id', { count: 'exact', head: true }).eq('review_status', 'pending'),
@@ -149,17 +154,18 @@ export const api = {
       sb.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       sb.from('patrols').select('id', { count: 'exact', head: true }).gte('started_at', today),
       sb.from('scans').select('status,flags').gte('server_at', today).then(chk),
+      sb.from('incidents').select('id', { count: 'exact', head: true }).gte('created_at', today),
       routesWithPoints(false, false)]);
     return {
       active: active.map(p => summarize(p, routes)),
       sos: sos.map(s => ({ ...s, profile: s.profiles })),
       openIncidents: inc.map(i => ({ ...i, profile: i.profiles })),
       pendingReview: pend.count || 0, pendingDevices: devs.count || 0, pendingSelfies: selfies.count || 0, pendingRegistrations: regs.count || 0,
-      today: { patrols: tp.count || 0, scans: ts.length, abnormal: ts.filter(s => s.status === 'abnormal').length, flagged: ts.filter(s => s.flags.length).length },
+      today: { patrols: tp.count || 0, scans: ts.length, abnormal: ts.filter(s => s.status === 'abnormal').length + (ti.count || 0), flagged: ts.filter(s => s.flags.length).length },
     };
   },
 
-  async listProfiles() { return chk(await sb.from('profiles').select('id,staff_no,name,role,active').order('staff_no')); },
+  async listProfiles() { return chk(await sb.from('profiles').select('id,staff_no,name,role,active,post').order('staff_no')); },
   async updateProfile(id, patch) { chk(await sb.from('profiles').update(patch).eq('id', id)); },
   async createUser(u) { return api._admin('createUser', { ...u, email_domain: CONFIG.LOGIN_EMAIL_DOMAIN }); },
   async resetPassword(id, password) { return api._admin('resetPassword', { user_id: id, password }); },
@@ -182,19 +188,19 @@ export const api = {
 
   async adminCheckpoints() { return chk(await sb.rpc('admin_checkpoints')); },
   async saveCheckpoint(cp) {
-    const row = (({ code, name, type, lat, lng, radius_m, enforce_fence, checklist, min_photos, active, note }) =>
-      ({ code, name, type, lat, lng, radius_m, enforce_fence, checklist, min_photos, active, note }))(cp);
+    const row = (({ code, name, type, post, lat, lng, radius_m, enforce_fence, checklist, min_photos, active, note }) =>
+      ({ code, name, type, post: post || null, lat, lng, radius_m, enforce_fence, checklist, min_photos, active, note }))(cp);
     if (cp.id) chk(await sb.from('checkpoints').update({ ...row, updated_at: new Date().toISOString() }).eq('id', cp.id));
     else chk(await sb.from('checkpoints').insert(row));
   },
   async rotateToken(id) { chk(await sb.rpc('rotate_qr_token', { p_id: id })); },
   adminRoutes: () => routesWithPoints(false, true),
-  async saveRoute({ id, name, mode, active, pointIds }) {
-    chk(await sb.rpc('save_route', { p_id: id || null, p_name: name, p_mode: mode, p_active: active, p_point_ids: pointIds }));
+  async saveRoute({ id, name, mode, active, pointIds, post }) {
+    chk(await sb.rpc('save_route', { p_id: id || null, p_name: name, p_mode: mode, p_active: active, p_point_ids: pointIds, p_post: post || null }));
   },
 
   async listPatrols({ from, to, userId } = {}) {
-    let q = sb.from('patrols').select(`*, scans(status,flags,server_at), ${prof('patrols')}`).order('started_at', { ascending: false }).limit(500);
+    let q = sb.from('patrols').select(`*, scans(status,flags,server_at), incidents(id), ${prof('patrols')}`).order('started_at', { ascending: false }).limit(500);
     if (from) q = q.gte('started_at', dayStart(from));
     if (to) q = q.lte('started_at', dayEnd(to));
     if (userId) q = q.eq('user_id', userId);
@@ -248,11 +254,11 @@ export const api = {
     }
     return data;
   },
-  async passkeyRegister({ staff_no, name, phone, org, deviceId, deviceLabel }) {
+  async passkeyRegister({ staff_no, name, phone, org, post, deviceId, deviceLabel }) {
     const o = await api._fn('passkey', { action: 'register-options', staff_no, name });
     let response;
     try { response = await wa.startRegistration(o.options); } catch (e) { throw new Error(wa.friendlyError(e)); }
-    const r = await api._fn('passkey', { action: 'register-submit', challengeId: o.challengeId, response, staff_no, name, phone, org,
+    const r = await api._fn('passkey', { action: 'register-submit', challengeId: o.challengeId, response, staff_no, name, phone, org, post,
       device_id: deviceId, device_label: deviceLabel, consent: true });
     return { requestId: r.requestId, credentialId: r.credentialId };
   },
@@ -268,7 +274,7 @@ export const api = {
     return p;
   },
   async listRegistrations({ status } = {}) {
-    let q = sb.from('registration_requests').select('id,kind,staff_no,name,phone,org,device_id,device_label,consent_at,status,reject_reason,created_at,decided_at')
+    let q = sb.from('registration_requests').select('id,kind,staff_no,name,phone,org,post,device_id,device_label,consent_at,status,reject_reason,created_at,decided_at')
       .order('created_at', { ascending: false }).limit(200);
     if (status) q = q.eq('status', status);
     return chk(await q);
@@ -305,7 +311,7 @@ export const api = {
     const { from, to } = dutyWindow(day, startHour);
     const F = from.toISOString(), T = to.toISOString();
     const [patrols, incidents, sos, routes, cps] = await Promise.all([
-      sb.from('patrols').select(`*, scans(status,flags,server_at), ${prof('patrols')}`).gte('started_at', new Date(from.getTime() - 36 * 3600000).toISOString())
+      sb.from('patrols').select(`*, scans(status,flags,server_at), incidents(id), ${prof('patrols')}`).gte('started_at', new Date(from.getTime() - 36 * 3600000).toISOString())
         .lt('started_at', T).or(`ended_at.is.null,ended_at.gte.${F}`).order('started_at').then(chk),
       sb.from('incidents').select(`*, ${prof('incidents')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
       sb.from('sos_alerts').select(`*, ${prof('sos_alerts')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
