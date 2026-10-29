@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>元智校園巡邏系統</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: 左欄為設計規格文件，右欄為黏附式手機原型；窄螢幕時原型置頂、規格在下 */
+:root{
+  --ink:#16222b;          /* 主文字：深夜巡邏的墨藍 */
+  --paper:#f5f7f6;        /* 底：帶冷調的灰白 */
+  --line:#c9d2d0;         /* 細線 */
+  --muted:#5b6b70;        /* 次要文字 */
+  --vest:#e8650c;         /* 重點色：反光背心橘 */
+  --ok:#1f7a4d; --warn:#b7791f; --bad:#c0392b;
+  --phone:#0f1a21; --screen:#ffffff; --chip:#eef2f1;
+  --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-disp:"Barlow Condensed","Noto Sans TC",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --ink:#e4ebe9;--paper:#11181d;--line:#2c3a40;--muted:#94a5a9;--vest:#ff8a3d;
+  --ok:#4fbf86;--warn:#e0a84a;--bad:#ef6b5c;--phone:#05090c;--screen:#18232a;--chip:#22313a;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --ink:#e4ebe9;--paper:#11181d;--line:#2c3a40;--muted:#94a5a9;--vest:#ff8a3d;
+  --ok:#4fbf86;--warn:#e0a84a;--bad:#ef6b5c;--phone:#05090c;--screen:#18232a;--chip:#22313a;color-scheme:dark}
+html,body{background:var(--paper);color:var(--ink)}
+body{font-family:var(--f-body);font-size:15px;line-height:1.75;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+*{box-sizing:border-box}
+.wrap{max-width:1240px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:48px;padding-block:40px 64px}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr);gap:32px;padding-block:24px 48px}.proto{order:-1}}
+header.top{grid-column:1/-1;border-bottom:2px solid var(--ink);padding-bottom:16px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:12px}
+.eyebrow{font-family:var(--f-disp);letter-spacing:.14em;text-transform:uppercase;color:var(--vest);font-weight:700;font-size:14px}
+h1{font-size:clamp(26px,4vw,38px);line-height:1.25;margin:4px 0 0;font-weight:900;text-wrap:balance}
+.meta{font-family:var(--f-mono);font-size:12px;color:var(--muted);text-align:right}
+.doc{min-width:0}
+.doc section{padding-block:22px;border-bottom:1px solid var(--line)}
+.doc h2{font-size:20px;margin:0 0 10px;display:flex;gap:12px;align-items:baseline;text-wrap:balance}
+.doc h2 .n{font-family:var(--f-disp);color:var(--vest);font-size:22px;min-width:28px}
+.doc h3{font-size:16px;margin:16px 0 6px}
+.doc p{margin:6px 0;max-width:68ch}
+.doc ul,.doc ol{margin:6px 0;padding-left:1.4em;max-width:72ch}
+.doc li{margin:3px 0}
+.tag{font-size:12px;font-weight:700;color:var(--vest);white-space:nowrap}
+.key{font-size:17px;font-weight:700;border-left:4px solid var(--vest);padding-left:12px;max-width:68ch}
+.tbl{overflow-x:auto;margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top;background:transparent}
+th{font-weight:700}
+td code,p code,li code{font-family:var(--f-mono);font-size:12.5px}
+.flow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:14px;margin:10px 0}
+.flow span{border:1px solid var(--ink);padding:3px 10px;border-radius:2px}
+.flow i{font-style:normal;color:var(--muted)}
+
+/* ===== 手機原型 ===== */
+.proto{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);align-self:start}
+.proto .cap{font-size:13px;color:var(--muted);margin:0 0 10px}
+.phone{background:var(--phone);border-radius:38px;padding:12px;box-shadow:0 20px 50px rgba(0,0,0,.25);max-width:380px;margin:0 auto}
+.screen{background:var(--screen);border-radius:28px;height:700px;overflow:hidden;display:flex;flex-direction:column;position:relative}
+.sbar{display:flex;justify-content:space-between;font-family:var(--f-mono);font-size:11px;padding:10px 22px 4px;color:var(--muted)}
+.view{flex:1;overflow-y:auto;padding:8px 18px 18px;display:flex;flex-direction:column;gap:12px}
+.view h4{margin:4px 0 0;font-size:20px;font-weight:900}
+.small{font-size:12px;color:var(--muted)}
+.mono{font-family:var(--f-mono)}
+.btn{font:inherit;font-weight:700;border:0;border-radius:12px;padding:13px 14px;cursor:pointer;background:var(--ink);color:var(--screen);width:100%}
+.btn.vest{background:var(--vest);color:#fff}
+.btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
+.btn.sos{background:var(--bad);color:#fff}
+.btn:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,.pt:focus-visible{outline:3px solid var(--vest);outline-offset:2px}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:500}
+input,select,textarea{font:inherit;font-size:14px;padding:10px;border:1.5px solid var(--line);border-radius:10px;background:var(--screen);color:var(--ink)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;background:var(--chip);border-radius:999px;padding:3px 10px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}
+.card{border:1.5px solid var(--line);border-radius:14px;padding:12px}
+.prog{height:8px;background:var(--chip);border-radius:9px;overflow:hidden}
+.prog b{display:block;height:100%;background:var(--vest);transition:width .4s}
+.pts{display:flex;flex-direction:column;gap:6px}
+.pt{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;font-size:14px}
+.pt .st{font-size:12px;font-weight:700;white-space:nowrap}
+.st.todo{color:var(--muted)} .st.done{color:var(--ok)} .st.abn{color:var(--bad)}
+.vf{background:#000;border-radius:16px;aspect-ratio:1/1;max-width:100%;position:relative;overflow:hidden}
+.vf::before{content:"";position:absolute;inset:18%;border:3px solid var(--vest);border-radius:12px}
+.vf::after{content:"";position:absolute;left:20%;right:20%;height:2px;background:var(--vest);top:20%;animation:scan 2s linear infinite alternate}
+@keyframes scan{to{top:78%}}
+@media (prefers-reduced-motion:reduce){.vf::after{animation:none;top:50%}}
+.vf .hint{position:absolute;bottom:10px;left:0;right:0;text-align:center;color:#fff;font-size:12px}
+.qrs{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.qrs button{font:inherit;font-size:12px;padding:8px;border-radius:10px;border:1.5px dashed var(--line);background:transparent;color:var(--ink);cursor:pointer;text-align:left}
+canvas.ph{width:100%;border-radius:12px;display:block}
+.seg{display:flex;border:1.5px solid var(--line);border-radius:12px;overflow:hidden}
+.seg label{flex:1;text-align:center;padding:9px;font-weight:700;font-size:14px;cursor:pointer}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg input:checked+span{color:var(--vest)}
+.seg label:has(input:checked){background:var(--chip)}
+.chk{display:flex;flex-direction:column;gap:4px;font-size:14px}
+.chk label{display:flex;gap:8px;align-items:center}
+.toast{position:absolute;left:14px;right:14px;bottom:14px;background:var(--ink);color:var(--screen);padding:10px 14px;border-radius:12px;font-size:13px;transform:translateY(140%);transition:transform .25s}
+.toast.on{transform:none}
+.toast.bad{background:var(--bad);color:#fff}
+.nav{display:flex;border-top:1px solid var(--line)}
+.nav button{flex:1;font:inherit;font-size:12px;padding:10px 0 14px;background:transparent;border:0;color:var(--muted);cursor:pointer}
+.nav button.on{color:var(--vest);font-weight:700}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;font-family:var(--f-mono);font-size:12.5px}
+.bio{display:flex;flex-direction:column;align-items:center;gap:10px;padding:30px 0}
+.ring{width:110px;height:110px;border-radius:50%;border:4px solid var(--line);border-top-color:var(--vest);animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.ring{animation:none}}
+.note{font-size:12px;color:var(--muted);border-top:1px dashed var(--line);padding-top:8px}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="eyebrow">Campus Guard Patrol · 規格書 v0.1 草案</div>
+      <h1>元智大學校園巡邏 App 設計規格</h1>
+    </div>
+    <div class="meta">起草日期 2026-10-22<br>狀態：草案，待總務處與保全單位確認</div>
+  </header>
+
+  <main class="doc">
+    <section>
+      <h2><span class="n">1</span>核心議題與設計目標</h2>
+      <p class="key">如何以最低操作負擔，讓每一筆巡查紀錄都能證明「此人、此時、在此地、看見此狀況」？</p>
+      <p>系統成敗取決於四項證據能否同時成立。只要其中一項可被替代，代巡即有空間：</p>
+      <ol>
+        <li><b>身分（Who）</b>：操作手機者即為登入帳號本人。</li>
+        <li><b>時間（When）</b>：時間戳記由伺服器端核發，手機無法竄改。</li>
+        <li><b>地點（Where）</b>：掃描動作發生於據點現場，而非翻拍的 QR Code 前。</li>
+        <li><b>現況（What）</b>：照片為現場即時拍攝，非相簿舊照。</li>
+      </ol>
+      <p>次要目標為降低漏巡、加速異常通報，並讓管理端可直接匯出稽核報表。</p>
+    </section>
+
+    <section>
+      <h2><span class="n">2</span>使用者角色與權限</h2>
+      <div class="tbl"><table>
+        <tr><th>角色</th><th>主要功能</th><th>資料可見範圍</th></tr>
+        <tr><td>巡邏員</td><td>開始／結束巡邏、掃描據點、拍照、回報異常、SOS、交接紀錄</td><td>僅限本人紀錄</td></tr>
+        <tr><td>班長／保全主管</td><td>即時監看巡邏進度、接收異常推播、核可漏巡原因、指派補巡</td><td>所轄班組全員</td></tr>
+        <tr><td>總務處管理者</td><td>據點與路線維護、QR／NFC 標籤產製、報表匯出、帳號與裝置綁定管理</td><td>全校；個資存取留有稽核紀錄</td></tr>
+      </table></div>
+      <p>「每位巡查員只能記錄自己的巡查」在權限層的落實方式：API 一律以登入權杖（Token）辨識使用者，前端不提供選擇巡邏人員的欄位，因此無從替他人建立紀錄。</p>
+    </section>
+
+    <section>
+      <h2><span class="n">3</span>巡邏作業流程</h2>
+      <div class="flow"><span>登入＋生物辨識</span><i>→</i><span>選擇班別與路線，按「開始巡邏」</span><i>→</i><span>到點掃描 QR</span><i>→</i><span>系統驗證位置與時間</span><i>→</i><span>現場拍照＋檢查清單</span><i>→</i><span>正常／異常回報</span><i>→</i><span>下一據點</span><i>→</i><span>結束巡邏＋漏巡說明＋交接</span></div>
+      <ul>
+        <li><b>開始巡邏</b>：日期與時間由系統自動帶入伺服器時間，巡邏員不需手動輸入日期，以避免事後補登。</li>
+        <li><b>據點順序</b>：預設不強制順序，以保留實務彈性；可依路線設定「固定順序」或「隨機抽點」。</li>
+        <li><b>離線作業</b>：地下室、配電室常無訊號。App 先加密暫存並記錄裝置單調時鐘，恢復連線後上傳，伺服器比對時間差，超過門檻即標示「延遲上傳」。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2><span class="n">4</span>防代巡機制（五層驗證）</h2>
+      <p>單用 QR Code 無法防止代巡。QR 可被翻拍、列印後在值班室掃描，因此需疊加多層驗證，任一層異常即標記該筆紀錄，交由主管覆核。</p>
+      <div class="tbl"><table>
+        <tr><th>層次</th><th>機制</th><th>可阻擋的情境</th></tr>
+        <tr><td>身分層</td><td>開始巡邏時以手機生物辨識（Face ID／指紋）解鎖；巡邏中隨機 1–2 次要求自拍並與人事照比對</td><td>借帳號、交出手機給他人代走</td></tr>
+        <tr><td>裝置層</td><td>帳號綁定單一裝置；換機需主管核准；偵測模擬定位（Mock Location）與 Root／越獄</td><td>多人共用帳號、使用假 GPS 軟體</td></tr>
+        <tr><td>位置層</td><td>掃描時同步擷取 GPS，須落於據點地理圍欄（Geofence）半徑內，預設 30 公尺；室內點可改用 NFC 或藍牙信標（BLE Beacon）</td><td>翻拍 QR 在他處掃描</td></tr>
+        <tr><td>時間層</td><td>伺服器核發時間戳；依據點間步行距離設定最短間隔，例如兩點距離 400 公尺卻 1 分鐘內完成即示警</td><td>集中補掃、事後補登</td></tr>
+        <tr><td>證據層</td><td>僅允許 App 內相機即時拍攝，停用相簿選取；照片自動壓上浮水印（姓名、據點、伺服器時間、座標），並計算雜湊值（Hash）防竄改</td><td>使用舊照片、修圖</td></tr>
+      </table></div>
+      <p>QR Code 本身建議內含「據點代碼＋簽章」，並每學期更換一次。高風險據點（配電室、機房、金庫）應改用 NFC 標籤，其內建唯一序號，翻拍無效。</p>
+    </section>
+
+    <section>
+      <h2><span class="n">5</span>每筆定點巡查紀錄欄位</h2>
+      <div class="tbl"><table>
+        <tr><th>欄位</th><th>來源</th><th>說明</th></tr>
+        <tr><td>巡邏員工號、姓名</td><td>登入權杖</td><td>不可手動修改</td></tr>
+        <tr><td>巡邏場次編號</td><td>系統</td><td>同一次巡邏的所有據點歸屬同一場次</td></tr>
+        <tr><td>據點代碼、名稱</td><td>QR／NFC</td><td>掃描取得</td></tr>
+        <tr><td>掃描時間</td><td>伺服器</td><td>離線時另存裝置時間並標記</td></tr>
+        <tr><td>GPS 座標、精度</td><td>裝置</td><td>僅於巡邏期間擷取</td></tr>
+        <tr><td>現場照片（1–3 張）</td><td>App 相機</td><td>附浮水印與雜湊值</td></tr>
+        <tr><td>檢查清單</td><td>巡邏員勾選</td><td>依據點類型設定，例如門窗、照明、消防設備</td></tr>
+        <tr><td>狀態</td><td>巡邏員</td><td>正常／異常</td></tr>
+        <tr><td>異常類別、嚴重度、說明</td><td>巡邏員</td><td>異常時必填；可附語音轉文字</td></tr>
+        <tr><td>驗證旗標</td><td>系統</td><td>位置不符、間隔過短、延遲上傳、自拍比對失敗</td></tr>
+      </table></div>
+    </section>
+
+    <section>
+      <h2><span class="n">6</span>建議增列的巡查紀錄內容</h2>
+      <h3>A. 據點檢查清單（依據點類型配置）</h3>
+      <ul>
+        <li>門窗：是否上鎖、門禁是否正常、有無破壞痕跡</li>
+        <li>照明：路燈、緊急照明、出口指示燈</li>
+        <li>消防：滅火器壓力指針、消防栓箱、逃生通道是否淨空</li>
+        <li>機電：配電室異味、異音、漏水；電梯受困警報</li>
+        <li>環境：積水、樹木倒塌、施工圍籬破損、違規停車</li>
+      </ul>
+      <h3>B. 事件與通報</h3>
+      <ul>
+        <li><b>異常事件單</b>：類別、嚴重度（低／中／高／緊急）、照片、定位，送出後即時推播主管，並追蹤處理狀態直到結案。</li>
+        <li><b>SOS 緊急求援</b>：長按 3 秒觸發，傳送即時位置給主管與校安中心；夜間單人巡邏特別需要。</li>
+        <li><b>可疑人員／訪客紀錄</b>：時間、地點、特徵描述、處置方式。</li>
+        <li><b>學生安全事件</b>：協助校安通報時，記錄轉介對象與時間。</li>
+      </ul>
+      <h3>C. 班務管理</h3>
+      <ul>
+        <li><b>漏巡原因</b>：結束巡邏時，未完成據點必須選擇原因（施工封閉、處理突發事件、門禁無法進入等）。</li>
+        <li><b>交接班紀錄</b>：未結案事件、鑰匙與設備（手電筒、無線電）交接清點。</li>
+        <li><b>巡邏軌跡</b>：每 60 秒記錄一次位置點，僅於巡邏期間啟用。</li>
+        <li><b>天候與特殊狀況</b>：颱風、豪雨等特殊時段可啟用「加強巡邏路線」。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2><span class="n">7</span>管理後台功能</h2>
+      <ul>
+        <li><b>即時看板</b>：各路線進度、目前位置、未結案異常數。</li>
+        <li><b>據點與路線管理</b>：新增據點、設定圍欄半徑、檢查清單樣板、批次產製 QR 標籤 PDF。</li>
+        <li><b>稽核報表</b>：依日期、人員、據點查詢；匯出 Excel／PDF，可提供保全合約驗收與校安稽核使用。</li>
+        <li><b>例外清單</b>：集中列出所有帶驗證旗標的紀錄，主管逐筆覆核並留下意見。</li>
+        <li><b>統計分析</b>：異常熱點地圖、各時段異常件數、平均巡邏時間，作為調整路線與班表的依據。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2><span class="n">8</span>導入方案</h2>
+      <div class="tbl"><table>
+        <tr><th>項目</th><th>主方案：自建（校內開發或委外）</th><th>替代方案：採購既有巡邏 SaaS</th></tr>
+        <tr><td>技術</td><td>Flutter 跨平台 App＋雲端或校內伺服器；整合校園單一登入</td><td>廠商 App＋網頁後台</td></tr>
+        <tr><td>優點</td><td>可客製校內流程，資料留在學校，可與校安、總務報修系統串接</td><td>上線快，多數已具備 QR／NFC／GPS 功能</td></tr>
+        <tr><td>缺點</td><td>開發與維運需要人力，需處理 iOS／Android 上架</td><td>客製受限，資料存於廠商端，需另審個資條款</td></tr>
+        <tr><td>適用情境</td><td>學校希望長期擁有、可結合課程或學生專題</td><td>希望一學期內上線</td></tr>
+      </table></div>
+      <h3>分階段時程【推斷】</h3>
+      <ol>
+        <li>第 1–4 週：盤點據點、繪製路線、確認檢查清單（總務處＋保全）。</li>
+        <li>第 5–12 週：開發 MVP（登入、開始巡邏、QR＋GPS、拍照、異常回報、後台查詢）。</li>
+        <li>第 13–16 週：選 1 條路線試行並修正誤判門檻。</li>
+        <li>第 17 週後：全校上線，再加入 NFC、自拍比對、軌跡等進階功能。</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2><span class="n">9</span>法規與隱私</h2>
+      <ul>
+        <li>GPS、軌跡與自拍照屬個人資料，蒐集前須依《個人資料保護法》告知目的、期間與利用方式，並取得書面同意。</li>
+        <li>定位僅於「開始巡邏」至「結束巡邏」期間啟用，下班時間不得追蹤。</li>
+        <li>若巡邏員為保全公司派駐人員，資料權屬與調閱權限需寫入保全契約。</li>
+        <li>照片可能拍到學生，建議 180 天後自動刪除，異常事件附件依校安規定另行保存。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2><span class="n">10</span>已做假設與建議查證</h2>
+      <ul>
+        <li><span class="tag">已做假設</span> 巡邏員使用學校配發或個人智慧型手機，且具備生物辨識功能。</li>
+        <li><span class="tag">已做假設</span> 右側原型中的據點名稱為示意，需依總務處實際據點清單替換。</li>
+        <li><span class="tag">建議查證</span> 戶外 GPS 誤差約 5–15 公尺，大樓之間可能更大；圍欄半徑應以試行資料校正。</li>
+        <li><span class="tag">建議查證</span> 巡邏員身分為校聘或外包保全，將影響帳號管理、手機配發與個資同意流程。</li>
+        <li><span class="tag">建議查證</span> 開發時程為一般 MVP 經驗推估，實際取決於開發團隊與校內資訊處資源。</li>
+      </ul>
+    </section>
+  </main>
+
+  <aside class="proto" aria-label="手機原型">
+    <p class="cap">可操作原型：可依序體驗登入、開始巡邏、掃描、拍照與結束流程。資料僅存在本頁面，重新整理即清除。</p>
+    <div class="phone">
+      <div class="screen">
+        <div class="sbar"><span id="clock">--:--</span><span>4G · GPS ●</span></div>
+        <div class="view" id="view"></div>
+        <nav class="nav" id="nav" hidden>
+          <button data-go="home" id="nv-home">首頁</button>
+          <button data-go="patrol" id="nv-patrol">巡邏中</button>
+          <button data-go="history" id="nv-history">我的紀錄</button>
+        </nav>
+        <div class="toast" id="toast" role="status"></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+(function(){
+  const V=document.getElementById('view'), NAV=document.getElementById('nav'), T=document.getElementById('toast');
+  const POINTS=[
+    {id:'P01',name:'行政大樓正門',type:'門禁'},
+    {id:'P02',name:'圖書館側門',type:'門禁'},
+    {id:'P03',name:'體育館周邊',type:'戶外'},
+    {id:'P04',name:'學生宿舍區',type:'宿舍'},
+    {id:'P05',name:'地下停車場 B1',type:'停車場'},
+    {id:'P06',name:'配電室',type:'機電'}
+  ];
+  const CHECKS={'門禁':['門窗已上鎖','門禁設備正常','無破壞痕跡'],'戶外':['照明正常','無積水或倒木','無可疑人員'],
+    '宿舍':['出入口管制正常','逃生通道淨空','無可疑人員'],'停車場':['照明正常','無違規停車','緊急求救鈴正常'],
+    '機電':['無異味或異音','無漏水','滅火器壓力正常']};
+  const S={user:null,shift:null,recs:{},history:[],cur:null,photo:null};
+  const pad=n=>String(n).padStart(2,'0');
+  const now=()=>new Date();
+  const hm=d=>pad(d.getHours())+':'+pad(d.getMinutes());
+  const hms=d=>hm(d)+':'+pad(d.getSeconds());
+  const ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+  setInterval(()=>{document.getElementById('clock').textContent=hm(now())},1000);
+  document.getElementById('clock').textContent=hm(now());
+  function toast(msg,bad){T.textContent=msg;T.className='toast on'+(bad?' bad':'');clearTimeout(toast.t);toast.t=setTimeout(()=>T.className='toast',2600)}
+  function nav(on){NAV.hidden=!S.user;['home','patrol','history'].forEach(k=>document.getElementById('nv-'+k).classList.toggle('on',k===on))}
+  NAV.addEventListener('click',e=>{const g=e.target.dataset.go;if(!g)return;
+    if(g==='patrol'&&!S.shift){toast('尚未開始巡邏');return} go(g)});
+  function go(s){V.scrollTop=0;R[s]();}
+  const R={};
+
+  R.login=()=>{nav();V.innerHTML=`
+    <div class="small">元智大學 · 總務處</div><h4>校園巡邏登入</h4>
+    <label class="f">工號<input id="uid" value="G1024"></label>
+    <label class="f">密碼<input id="pwd" type="password" value="••••••••"></label>
+    <span class="chip"><span class="dot"></span>本裝置已綁定此帳號</span>
+    <button class="btn vest" id="b-login">登入並進行生物辨識</button>
+    <p class="note">示範帳號為虛構人員。正式版本以校園單一登入驗證，換機須主管核准。</p>`;
+    document.getElementById('b-login').onclick=()=>{V.innerHTML=`<div class="bio"><div class="ring"></div><b>臉部辨識中</b><span class="small">請將手機對準臉部</span></div>`;
+      setTimeout(()=>{S.user={id:document.getElementById('uid')?.value||'G1024',name:'林巡員（示範）'};S.user.id=S.user.id||'G1024';toast('身分驗證成功');go('home')},1200)}};
+
+  R.home=()=>{nav('home');const d=now();const busy=!!S.shift;V.innerHTML=`
+    <div class="small">${S.user.id} · ${S.user.name}</div><h4>今日巡邏</h4>
+    <div class="card"><dl class="kv"><dt>日期</dt><dd>${ymd(d)}（伺服器時間）</dd><dt>目前時間</dt><dd>${hms(d)}</dd></dl></div>
+    ${busy?`<div class="card"><b>巡邏進行中</b><div class="small">${S.shift.route} · ${S.shift.slot} · 開始於 ${hm(S.shift.start)}</div></div>
+      <button class="btn vest" data-a="patrol">返回巡邏</button>`:`
+    <label class="f">班別<select id="slot"><option>夜班 22:00–06:00</option><option>早班 06:00–14:00</option><option>中班 14:00–22:00</option></select></label>
+    <label class="f">巡邏路線<select id="route"><option>A 線 · 校園全區（6 點）</option><option>B 線 · 加強巡邏（颱風豪雨）</option></select></label>
+    <label class="f">天候<select id="wx"><option>晴</option><option>陰</option><option>雨</option><option>強風豪雨</option></select></label>
+    <button class="btn vest" data-a="start">開始巡邏</button>`}
+    <button class="btn ghost" data-a="history">查看我的巡查紀錄</button>
+    <button class="btn sos" id="sos">長按 3 秒 · SOS 緊急求援</button>`;
+    bindSOS();
+    V.querySelector('[data-a=start]')?.addEventListener('click',()=>{
+      S.shift={no:'R'+ymd(now()).replace(/-/g,'')+'-'+pad(Math.floor(Math.random()*90+10)),route:document.getElementById('route').value.split(' · ')[0],
+        slot:document.getElementById('slot').value.split(' ')[0],wx:document.getElementById('wx').value,start:now(),events:[]};S.recs={};
+      toast('已開始巡邏，定位追蹤啟用');go('patrol')});
+    V.querySelector('[data-a=patrol]')?.addEventListener('click',()=>go('patrol'));
+    V.querySelector('[data-a=history]').addEventListener('click',()=>go('history'))};
+
+  function bindSOS(){const b=document.getElementById('sos');if(!b)return;let t;
+    const down=()=>{b.textContent='持續按住…';t=setTimeout(()=>{b.textContent='已送出求援';toast('SOS 已送出：位置已傳送給值班主管與校安中心',true)},3000)};
+    const up=()=>{clearTimeout(t);setTimeout(()=>{if(b.isConnected)b.textContent='長按 3 秒 · SOS 緊急求援'},1500)};
+    b.addEventListener('pointerdown',down);['pointerup','pointerleave'].forEach(e=>b.addEventListener(e,up))}
+
+  R.patrol=()=>{nav('patrol');const done=Object.keys(S.recs).length;const pct=Math.round(done/POINTS.length*100);
+    const el=Math.floor((now()-S.shift.start)/60000);
+    V.innerHTML=`<div class="small mono">${S.shift.no} · ${S.shift.route} · ${S.shift.slot}</div><h4>巡邏中 ${done}/${POINTS.length}</h4>
+    <div class="prog"><b style="width:${pct}%"></b></div><div class="small">已進行 ${el} 分鐘 · 事件 ${S.shift.events.length} 件</div>
+    <div class="pts">${POINTS.map(p=>{const r=S.recs[p.id];const st=!r?['todo','待巡']:r.status==='異常'?['abn','異常 '+hm(r.t)]:['done','完成 '+hm(r.t)];
+      return `<div class="pt"><span><span class="mono small">${p.id}</span> ${p.name}</span><span class="st ${st[0]}">${st[1]}</span></div>`}).join('')}</div>
+    <button class="btn vest" data-a="scan">掃描據點 QR Code</button>
+    <div class="row"><button class="btn ghost" data-a="event">回報事件</button><button class="btn ghost" data-a="end">結束巡邏</button></div>
+    <button class="btn sos" id="sos">長按 3 秒 · SOS 緊急求援</button>`;
+    bindSOS();
+    V.querySelector('[data-a=scan]').onclick=()=>go('scan');
+    V.querySelector('[data-a=event]').onclick=()=>go('event');
+    V.querySelector('[data-a=end]').onclick=()=>go('end')};
+
+  R.scan=()=>{nav('patrol');V.innerHTML=`<h4>掃描據點</h4>
+    <div class="vf"><div class="hint">將 QR Code 置於框內</div></div>
+    <div class="small">原型模擬：點選下方標籤代表掃到該據點。最後一個標籤模擬「翻拍 QR、位置不符」。</div>
+    <div class="qrs">${POINTS.map(p=>`<button data-p="${p.id}">${p.id} ${p.name}</button>`).join('')}<button data-p="FAKE">P03（值班室翻拍）</button></div>
+    <button class="btn ghost" data-a="back">取消</button>`;
+    V.querySelector('[data-a=back]').onclick=()=>go('patrol');
+    V.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{const id=b.dataset.p;
+      if(id==='FAKE'){toast('位置驗證失敗：距離 P03 據點 412 公尺，超出 30 公尺圍欄',true);return}
+      if(S.recs[id]){toast(id+' 本場次已完成，不可重複登錄',true);return}
+      const times=Object.values(S.recs).map(r=>r.t);const last=times.length?Math.max(...times):0;
+      const flag=last&&(now()-last)<20000?'間隔過短':'';
+      S.cur={p:POINTS.find(x=>x.id===id),t:now(),acc:Math.floor(Math.random()*9+4),flag};S.photo=null;
+      toast('掃描成功 · 位置驗證通過（誤差 '+S.cur.acc+' 公尺）');go('record')})};
+
+  function drawPhoto(img){const c=document.getElementById('cv');const ctx=c.getContext('2d');c.width=640;c.height=480;
+    if(img){const r=Math.max(640/img.width,480/img.height);const w=img.width*r,h=img.height*r;ctx.drawImage(img,(640-w)/2,(480-h)/2,w,h)}
+    else{const g=ctx.createLinearGradient(0,0,0,480);g.addColorStop(0,'#2b3a44');g.addColorStop(1,'#0e161b');ctx.fillStyle=g;ctx.fillRect(0,0,640,480);
+      ctx.fillStyle='#4a5c66';ctx.fillRect(220,120,200,300);ctx.fillStyle='#e8650c';ctx.fillRect(300,250,14,30);
+      ctx.fillStyle='#fffbe0';ctx.beginPath();ctx.arc(320,70,22,0,7);ctx.fill()}
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,388,640,92);ctx.fillStyle='#fff';ctx.font='600 20px "Noto Sans TC",sans-serif';
+    ctx.fillText(S.user.name+'  '+S.user.id+'  '+S.cur.p.id+' '+S.cur.p.name,16,418);
+    ctx.font='16px "JetBrains Mono",monospace';ctx.fillText(ymd(S.cur.t)+' '+hms(S.cur.t)+'  24.97xx N 121.26xx E  ±'+S.cur.acc+'m',16,450);
+    ctx.fillStyle='#e8650c';ctx.fillRect(0,388,6,92);S.photo=true;document.getElementById('cv').hidden=false}
+
+  R.record=()=>{const c=S.cur;V.innerHTML=`<div class="small mono">${c.p.id} · ${c.p.type}</div><h4>${c.p.name}</h4>
+    <div class="card"><dl class="kv"><dt>掃描時間</dt><dd>${hms(c.t)}</dd><dt>定位誤差</dt><dd>±${c.acc} m（圍欄內）</dd><dt>驗證旗標</dt><dd>${c.flag||'無'}</dd></dl></div>
+    <canvas class="ph" id="cv" hidden></canvas>
+    <div class="row"><button class="btn" data-a="shot">模擬拍照</button>
+      <label class="btn ghost" style="text-align:center">使用相機<input id="file" type="file" accept="image/*" capture="environment" hidden></label></div>
+    <div class="chk"><b>檢查清單</b>${CHECKS[c.p.type].map((x,i)=>`<label><input type="checkbox" id="ck${i}" checked> ${x}</label>`).join('')}</div>
+    <div class="seg" role="radiogroup"><label><input type="radio" name="st" value="正常" checked><span>正常</span></label><label><input type="radio" name="st" value="異常"><span>異常</span></label></div>
+    <div id="abn" hidden style="display:flex;flex-direction:column;gap:8px">
+      <label class="f">異常類別<select id="cat"><option>門窗未鎖</option><option>照明故障</option><option>漏水積水</option><option>設備損壞</option><option>消防設備異常</option><option>可疑人員</option><option>其他</option></select></label>
+      <label class="f">嚴重度<select id="sev"><option>低</option><option>中</option><option>高</option><option>緊急（立即通報）</option></select></label>
+      <label class="f">說明<textarea id="memo" rows="2" placeholder="例：3 樓東側窗戶未關，已關閉並上鎖"></textarea></label></div>
+    <button class="btn vest" data-a="save">完成定點巡查</button>
+    <p class="note">正式版本停用相簿選取，僅允許 App 內相機即時拍攝。</p>`;
+    V.querySelectorAll('input[name=st]').forEach(r=>r.onchange=()=>{document.getElementById('abn').hidden=V.querySelector('input[name=st]:checked').value!=='異常'});
+    document.getElementById('abn').hidden=true;
+    V.querySelector('[data-a=shot]').onclick=()=>drawPhoto(null);
+    document.getElementById('file').onchange=e=>{const f=e.target.files[0];if(!f)return;const im=new Image();im.onload=()=>drawPhoto(im);im.src=URL.createObjectURL(f)};
+    V.querySelector('[data-a=save]').onclick=()=>{
+      if(!S.photo){toast('請先拍攝現場照片',true);return}
+      const st=V.querySelector('input[name=st]:checked').value;
+      if(st==='異常'&&!document.getElementById('memo').value.trim()){toast('異常狀態需填寫說明',true);return}
+      const rec={pid:c.p.id,name:c.p.name,t:c.t,status:st,flag:c.flag,cat:st==='異常'?document.getElementById('cat').value:'',sev:st==='異常'?document.getElementById('sev').value:''};
+      S.recs[c.p.id]=rec;toast(st==='異常'?'已登錄並推播主管：'+rec.cat:'定點巡查完成');go('patrol')}};
+
+  R.event=()=>{nav('patrol');V.innerHTML=`<h4>回報事件</h4><div class="small">用於非據點位置的突發狀況，系統自動附上目前定位與時間。</div>
+    <label class="f">事件類型<select id="et"><option>可疑人員</option><option>訪客登記</option><option>學生安全事件</option><option>違規停車</option><option>設施損壞</option><option>天災影響</option></select></label>
+    <label class="f">處置方式<select id="eh"><option>已現場處理</option><option>已通報主管</option><option>已通報校安中心</option><option>已報警</option></select></label>
+    <label class="f">描述<textarea id="ed" rows="3" placeholder="時間、地點、人員特徵、處置經過"></textarea></label>
+    <button class="btn vest" data-a="send">送出事件單</button><button class="btn ghost" data-a="back">返回</button>`;
+    V.querySelector('[data-a=back]').onclick=()=>go('patrol');
+    V.querySelector('[data-a=send]').onclick=()=>{S.shift.events.push({t:now(),type:document.getElementById('et').value});toast('事件單已送出，編號 E'+Date.now().toString().slice(-5));go('patrol')}};
+
+  R.end=()=>{nav('patrol');const miss=POINTS.filter(p=>!S.recs[p.id]);V.innerHTML=`<h4>結束巡邏</h4>
+    <div class="card"><dl class="kv"><dt>場次</dt><dd>${S.shift.no}</dd><dt>開始</dt><dd>${hms(S.shift.start)}</dd><dt>結束</dt><dd>${hms(now())}</dd>
+    <dt>完成</dt><dd>${POINTS.length-miss.length}/${POINTS.length}</dd><dt>事件</dt><dd>${S.shift.events.length} 件</dd></dl></div>
+    ${miss.length?`<b>未巡據點須說明原因</b>${miss.map(p=>`<label class="f">${p.id} ${p.name}<select data-m="${p.id}"><option value="">請選擇</option><option>施工封閉</option><option>處理突發事件</option><option>門禁無法進入</option><option>天候因素</option></select></label>`).join('')}`:'<span class="chip"><span class="dot"></span>全部據點已完成</span>'}
+    <label class="f">交接事項<textarea id="ho" rows="2" placeholder="未結案事件、鑰匙與無線電清點"></textarea></label>
+    <button class="btn vest" data-a="fin">確認結束並送出</button><button class="btn ghost" data-a="back">繼續巡邏</button>`;
+    V.querySelector('[data-a=back]').onclick=()=>go('patrol');
+    V.querySelector('[data-a=fin]').onclick=()=>{if([...V.querySelectorAll('[data-m]')].some(s=>!s.value)){toast('請為每個未巡據點選擇原因',true);return}
+      const abn=Object.values(S.recs).filter(r=>r.status==='異常').length;
+      S.history.unshift({no:S.shift.no,date:ymd(S.shift.start),slot:S.shift.slot,route:S.shift.route,start:S.shift.start,end:now(),done:POINTS.length-miss.length,abn,miss:miss.length});
+      S.shift=null;S.recs={};toast('巡邏已結束，定位追蹤停止');go('history')}};
+
+  R.history=()=>{nav('history');const rows=S.history.concat([
+      {no:'R20261021-37',date:'2026-10-21',slot:'夜班',route:'A 線',done:6,abn:1,miss:0,ex:1},
+      {no:'R20261020-12',date:'2026-10-20',slot:'夜班',route:'A 線',done:5,abn:0,miss:1,ex:1}]);
+    V.innerHTML=`<div class="small">${S.user.id} · ${S.user.name}</div><h4>我的巡查紀錄</h4>
+    <div class="small">僅顯示本人紀錄。標示「示例」者為預先放入的範例資料。</div>
+    ${rows.map(r=>`<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><b class="mono">${r.no}</b>${r.ex?'<span class="chip">示例</span>':''}</div>
+      <div class="small">${r.date} · ${r.slot} · ${r.route}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"><span class="chip">完成 ${r.done}/6</span>${r.abn?`<span class="chip" style="color:var(--bad)">異常 ${r.abn}</span>`:''}${r.miss?`<span class="chip" style="color:var(--warn)">漏巡 ${r.miss}（已說明）</span>`:''}</div></div>`).join('')}
+    <button class="btn ghost" data-a="home">返回首頁</button>`;
+    V.querySelector('[data-a=home]').onclick=()=>go('home')};
+
+  go('login');
+})();
+</script>
+
+</body>
+</html>
