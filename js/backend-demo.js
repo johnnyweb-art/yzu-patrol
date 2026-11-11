@@ -432,8 +432,13 @@ export const api = {
     needStaff();
     return (load().registrations || []).filter(r => !status || r.status === status).sort((a, b) => b.created_at.localeCompare(a.created_at));
   },
-  async approveRegistration(id) {
-    const s = needStaff(), d = load();
+  // 示範模式專用：在巡邏員手機上直接以示範班長身分核准，方便一個人測完整流程
+  async demoApproveAsSupervisor(id) {
+    const sup = load().users.find(u => u.role === 'supervisor' && u.active);
+    return api.approveRegistration(id, sup);
+  },
+  async approveRegistration(id, actor) {
+    const s = actor || needStaff(), d = load();
     const r = (d.registrations || []).find(x => x.id === id);
     if (!r || r.status !== 'pending') throw new Error('此申請已處理或不存在');
     let u = d.users.find(x => x.staff_no === r.staff_no);

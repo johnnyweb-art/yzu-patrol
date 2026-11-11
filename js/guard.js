@@ -372,7 +372,9 @@ V.pending = () => {
     <div class="card"><dl class="kv"><dt>崗位</dt><dd>${esc(postLabel(pk.post))}</dd><dt>工號</dt><dd class="mono">${esc(pk.staffNo)}</dd><dt>姓名</dt><dd>${esc(pk.name)}</dd><dt>送出時間</dt><dd class="mono">${dt(pk.at)}</dd></dl></div>
     <div id="st"><p style="margin:0">請告訴班長「我已經申請了」。班長核准後，這個畫面會自動換到下一步。</p></div>
     <button class="btn vest block big" id="chk">重新檢查</button>
-    <button class="btn ghost block" id="redo">取消申請，重新填寫</button>`);
+    <button class="btn ghost block" id="redo">取消申請，重新填寫</button>
+    ${DEMO ? `<div class="banner demo stack" style="align-items:stretch"><div><b>示範模式</b>：沒有班長可以核准時，按下面的按鈕模擬班長核准。正式版沒有這個按鈕。</div>
+      <button class="btn block" id="demo-ok">模擬班長核准</button></div>` : ''}`);
   const check = async manual => {
     const r = await api.registrationStatus(pk.requestId, S.deviceId);
     if (r.status === 'approved') { PK.set({ ...pk, status: 'approved' }); toast('申請已核准'); return go('unlock'); }
@@ -386,6 +388,9 @@ V.pending = () => {
   };
   $('#chk').onclick = () => check(true).catch(showError);
   $('#redo').onclick = () => { PK.set(null); go('register'); };
+  $('#demo-ok')?.addEventListener('click', async () => {
+    try { await api.demoApproveAsSupervisor(pk.requestId); await check(true); } catch (e) { toast(e.message, 'bad'); }
+  });
   const t = setInterval(() => check(false).catch(() => {}), 15000);
   cleanup = () => clearInterval(t);
   check(false).catch(() => {});
