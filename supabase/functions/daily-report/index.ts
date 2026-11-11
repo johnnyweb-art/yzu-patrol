@@ -89,7 +89,7 @@ Deno.serve(async (req) => {
       if (!settings.enabled) return json({ skipped: '自動寄送未啟用' });
       if (!isSendDue(settings)) return json({ skipped: '尚未到寄送時間' });
       day = targetReportDay(settings);
-      const { data: done } = await db.from('report_runs').select('id').eq('report_day', day).eq('status', 'sent').limit(1);
+      const { data: done } = await db.from('report_runs').select('id').eq('report_day', day).eq('trigger', 'cron').eq('status', 'sent').limit(1);
       if (done?.length) return json({ skipped: '此勤務日已寄送' });
     } else {
       // 手動觸發：需為登入中的班長或管理者
