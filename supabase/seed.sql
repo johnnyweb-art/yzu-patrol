@@ -15,3 +15,9 @@ select r.id, c.id, row_number() over (order by c.code) from r, public.checkpoint
 with r as (insert into public.routes (name, mode, post) values ('側門巡邏路線', 'free', '側門') returning id)
 insert into public.route_points (route_id, checkpoint_id, seq)
 select r.id, c.id, row_number() over (order by c.code) from r, public.checkpoints c where c.post = '側門';
+
+-- 張貼位置說明（示意）
+update public.checkpoints set place = v.place from (values
+ ('P01', '行政大樓 1 樓正門右側牆面'), ('P02', '圖書館側門門框左側'), ('P03', '體育館東側路燈桿'),
+ ('P04', '學生宿舍大門警衛亭外牆'), ('P05', '地下停車場 B1 電梯口柱子'), ('P06', '配電室門外右側')
+) as v(code, place) where checkpoints.code = v.code and checkpoints.place is null;

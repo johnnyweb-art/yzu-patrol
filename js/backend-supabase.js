@@ -6,7 +6,7 @@ import * as wa from './webauthn.js';
 import { dutyWindow, applyWindow, patrolOverlaps, DEFAULT_REPORT_SETTINGS } from './report.js';
 
 const sb = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
-const CP_COLS = 'id,code,name,type,post,lat,lng,radius_m,enforce_fence,checklist,min_photos,active,note';
+const CP_COLS = 'id,code,name,type,post,place,lat,lng,radius_m,enforce_fence,checklist,min_photos,active,note';
 const prof = t => `profiles!${t}_user_id_fkey(id,staff_no,name,role,active,post)`;
 
 function chk({ data, error }) {
@@ -188,8 +188,8 @@ export const api = {
 
   async adminCheckpoints() { return chk(await sb.rpc('admin_checkpoints')); },
   async saveCheckpoint(cp) {
-    const row = (({ code, name, type, post, lat, lng, radius_m, enforce_fence, checklist, min_photos, active, note }) =>
-      ({ code, name, type, post: post || null, lat, lng, radius_m, enforce_fence, checklist, min_photos, active, note }))(cp);
+    const row = (({ code, name, type, post, place, lat, lng, radius_m, enforce_fence, checklist, min_photos, active, note }) =>
+      ({ code, name, type, post: post || null, place: place || null, lat, lng, radius_m, enforce_fence, checklist, min_photos, active, note }))(cp);
     if (cp.id) chk(await sb.from('checkpoints').update({ ...row, updated_at: new Date().toISOString() }).eq('id', cp.id));
     else chk(await sb.from('checkpoints').insert(row));
   },

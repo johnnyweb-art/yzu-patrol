@@ -39,7 +39,7 @@ function seed() {
     ['P05', '地下停車場 B1', '停車場', off(-90, 200), false, '大門'],
     ['P06', '配電室', '機電', off(-150, -60), false, '側門'],
   ].map(([code, name, type, pos, fence, post]) => ({
-    id: 'cp-' + code, code, name, type, post, lat: pos.lat, lng: pos.lng, radius_m: 30, enforce_fence: fence,
+    id: 'cp-' + code, code, name, type, post, place: PLACES[code] || '', lat: pos.lat, lng: pos.lng, radius_m: 30, enforce_fence: fence,
     checklist: CHECK[type], min_photos: 0, active: true, note: fence ? '' : '室內點，GPS 訊號弱，不強制圍欄',
     qr_token: Math.random().toString(16).slice(2, 14),
   }));
@@ -71,8 +71,14 @@ function seed() {
   return d;
 }
 
+// 張貼位置說明（示意）；舊的示範資料沒有這個欄位時自動補上
+const PLACES = { P01: '行政大樓 1 樓正門右側牆面', P02: '圖書館側門門框左側', P03: '體育館東側路燈桿',
+  P04: '學生宿舍大門警衛亭外牆', P05: '地下停車場 B1 電梯口柱子', P06: '配電室門外右側' };
 function load() {
-  try { const s = localStorage.getItem(KEY); if (s) return JSON.parse(s); } catch { /* 損毀時重建 */ }
+  try {
+    const s = localStorage.getItem(KEY);
+    if (s) { const d = JSON.parse(s); d.checkpoints.forEach(c => { if (c.place === undefined) c.place = PLACES[c.code] || ''; }); return d; }
+  } catch { /* 損毀時重建 */ }
   const d = seed(); save(d); return d;
 }
 function save(d) { localStorage.setItem(KEY, JSON.stringify(d)); listeners.forEach(f => f()); }

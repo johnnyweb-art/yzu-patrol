@@ -648,3 +648,8 @@ grant select (post) on public.checkpoints to authenticated;
 grant insert (post), update (post) on public.checkpoints to authenticated;
 grant update (post) on public.profiles to authenticated;
 grant select (post) on public.registration_requests to authenticated;
+
+-- ---------- QR 標籤：張貼位置說明 ----------
+alter table public.checkpoints add column if not exists place text;
+grant select (place) on public.checkpoints to authenticated;
+grant insert (place), update (place) on public.checkpoints to authenticated;

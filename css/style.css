@@ -178,17 +178,30 @@ dialog .db { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
   .main { padding-left: max(16px, env(safe-area-inset-left, 0px)); }
 }
 
-/* ===== QR 標籤列印 ===== */
-.labels { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
-.label { border: 1.5px dashed var(--line); border-radius: 10px; padding: 14px; text-align: center; background: #fff; color: #111; break-inside: avoid; }
-.label svg, .label img { width: 160px; height: 160px; display: block; margin: 6px auto; }
-.label .lc { font-family: var(--f-mono); font-weight: 600; font-size: 18px; }
-.label .ln { font-weight: 700; font-size: 15px; }
-.label .lo { font-size: 11px; color: #555; }
+/* ===== QR 標籤列印（10 × 14 公分） ===== */
+.pick-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.pick-list input { accent-color: var(--vest); }
+.qsheet { display: flex; flex-wrap: wrap; gap: 12px; }
+.qlabel { --post: #e8650c; position: relative; width: 100mm; height: 140mm; max-width: 100%; box-sizing: border-box; background: #fff; color: #111;
+  border: 1px dashed #b9b9b9; display: flex; flex-direction: column; align-items: center; overflow: hidden; break-inside: avoid;
+  font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; }
+.ql-band { width: 100%; background: var(--post); color: #fff; display: flex; justify-content: center; gap: 3mm; padding: 3.5mm 0 3mm;
+  font-size: 7mm; font-weight: 900; letter-spacing: .08em; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.ql-name { font-size: 8mm; font-weight: 900; margin-top: 4mm; text-align: center; line-height: 1.2; padding: 0 5mm; }
+.ql-qr { width: 56mm; height: 56mm; margin-top: 3mm; padding: 2.5mm; border: 1.2mm solid var(--post); border-radius: 3mm; box-sizing: content-box;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.ql-qr svg { width: 100%; height: 100%; display: block; }
+.ql-code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 5.5mm; font-weight: 600; letter-spacing: .15em; margin-top: 1.5mm; line-height: 1.4; }
+.ql-place { font-size: 3.5mm; margin-top: 1.5mm; padding: 0 6mm; text-align: center; }
+.ql-how { font-size: 3.3mm; margin-top: auto; padding: 1.5mm 5mm; white-space: nowrap; text-align: center; color: #333; }
+.ql-foot { width: 100%; border-top: .4mm solid #ccc; display: flex; justify-content: space-between; gap: 2mm; padding: 2mm 4mm 3mm; font-size: 2.8mm; color: #555; box-sizing: border-box; }
+.ql-sample { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 30mm; font-weight: 900;
+  color: rgba(192, 57, 43, .14); transform: rotate(-30deg); pointer-events: none; }
 @media print {
+  @page { size: A4; margin: 8mm 5mm; }
   body * { visibility: hidden; }
   #print-area, #print-area * { visibility: visible; }
-  #print-area { position: absolute; inset: 0; }
-  .labels { grid-template-columns: repeat(3, 1fr); }
-  .label { border: 1px solid #999; }
+  #print-area { position: absolute; left: 0; top: 0; width: 200mm; gap: 0; }
+  .qlabel[hidden] { display: none !important; }
 }
+

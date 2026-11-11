@@ -466,6 +466,7 @@ function cpDialog(c) {
         <label class="f">名稱<input id="c-name" value="${esc(c.name)}" required></label>
         <label class="f">崗位<select id="c-post">${postOpts(c.post)}</select></label>
         <label class="f">類型<input id="c-type" value="${esc(c.type)}" list="types"></label></div>
+      <label class="f">張貼位置說明（印在 QR 標籤上，讓巡邏員找得到）<input id="c-place" value="${esc(c.place || '')}" placeholder="例：行政大樓 1 樓正門右側牆面"></label>
       <datalist id="types"><option>門禁</option><option>戶外</option><option>宿舍</option><option>停車場</option><option>機電</option><option>實驗室</option></datalist>
       <div class="row"><label class="f">緯度<input id="c-lat" type="number" step="0.000001" value="${c.lat ?? ''}"></label>
         <label class="f">經度<input id="c-lng" type="number" step="0.000001" value="${c.lng ?? ''}"></label>
@@ -505,7 +506,7 @@ function cpDialog(c) {
   $('#cf').onsubmit = async e => {
     e.preventDefault();
     const num = s => { const v = parseFloat($(s).value); return isNaN(v) ? null : v; };
-    const cp = { id: c.id, code: $('#c-code').value.trim().toUpperCase(), name: $('#c-name').value.trim(), type: $('#c-type').value.trim() || '一般', post: $('#c-post').value || null,
+    const cp = { id: c.id, code: $('#c-code').value.trim().toUpperCase(), name: $('#c-name').value.trim(), type: $('#c-type').value.trim() || '一般', post: $('#c-post').value || null, place: $('#c-place').value.trim(),
       lat: num('#c-lat'), lng: num('#c-lng'), radius_m: parseInt($('#c-rad').value) || 30, enforce_fence: $('#c-fence').value === '1',
       min_photos: +$('#c-ph').value, active: $('#c-act').value === '1', note: $('#c-note').value.trim(),
       checklist: $('#c-chk').value.split('\n').map(x => x.trim()).filter(Boolean) };
@@ -563,23 +564,36 @@ P.routes = async main => {
 // ---------- QR 標籤列印 ----------
 P.labels = async main => {
   const cps = (await api.adminCheckpoints()).filter(c => c.active);
-  main.innerHTML = `<h1>QR 標籤列印</h1>
-    <div class="small">勾選要列印的據點後按「列印」。建議使用防水貼紙或護貝，張貼於據點固定位置。標籤內含金鑰，請勿外流；若懷疑被翻拍，請到「據點管理」更換金鑰後重印。</div>
-    <div class="row" style="flex:none;gap:12px"><label style="display:flex;gap:6px;align-items:center;flex:none"><input type="checkbox" id="all" checked> 全選</label>
-      <button class="btn vest" id="print" style="flex:none">列印</button></div>
-    <div id="print-area"><div class="labels">${cps.map(c => {
-      const qr = qrcode(0, 'M'); qr.addData(qrPayload(c.code, c.qr_token)); qr.make();
-      return `<label class="label" data-c="${c.id}"><input type="checkbox" checked class="pick" style="float:left" aria-label="選取 ${esc(c.code)}">
-        <div class="lo">${esc(CONFIG.ORG_NAME)}・校園巡邏點</div>${qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true })}
-        <div class="lc">${esc(c.code)}</div><div class="ln">${esc(c.name)}</div>${c.post ? `<div class="lo"><b>${esc(c.post)}巡邏點</b></div>` : ''}<div class="lo">請勿撕除・損壞請通報總務處</div></label>`;
-    }).join('')}</div></div>`;
-  const sync = () => $$('.label').forEach(l => { l.style.display = $('.pick', l).checked ? '' : 'none'; });
-  $('#all').onchange = e => { $$('.pick').forEach(p => (p.checked = e.target.checked)); };
-  $('#print').onclick = () => {
-    sync(); $$('.pick').forEach(p => (p.style.display = 'none'));
-    window.print();
-    setTimeout(() => { $$('.label').forEach(l => (l.style.display = '')); $$('.pick').forEach(p => (p.style.display = '')); }, 500);
+  const postName = id => CONFIG.POSTS.find(p => p.id === id)?.label || '';
+  // 標籤：10 × 14 公分，A4 一張可印 4 張。崗位以色帶區分，QR 使用較高容錯等級，貼在戶外略有磨損仍可掃描
+  const label = c => {
+    const qr = qrcode(0, 'Q'); qr.addData(qrPayload(c.code, c.qr_token)); qr.make();
+    return `<article class="qlabel" data-c="${c.id}" style="--post:${postColor(c.post)}">
+      <header class="ql-band"><span>${esc(postName(c.post) || '校園')}</span><span>巡邏點</span></header>
+      <div class="ql-name">${esc(c.name)}</div>
+      <div class="ql-qr">${qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true })}</div>
+      <div class="ql-code">${esc(c.code)}</div>
+      ${c.place ? `<div class="ql-place"><b>張貼位置</b>　${esc(c.place)}</div>` : ''}
+      <div class="ql-how">打開「校園巡邏」→ 按 <b>掃描 QR Code</b> → 對準上方圖案</div>
+      <footer class="ql-foot"><span>${esc(CONFIG.ORG_NAME)}</span><span>請勿撕除或遮蔽・損壞請通報 ${esc(CONFIG.LABEL_CONTACT)}</span></footer>
+      ${DEMO ? '<div class="ql-sample" aria-hidden="true">樣張</div>' : ''}
+    </article>`;
   };
+  main.innerHTML = `<h1>QR 標籤列印</h1>
+    <div class="small">每張 10 × 14 公分，A4 一張印 4 張。建議用防水貼紙或護貝後張貼。標籤內含防偽金鑰，請勿外流；懷疑被翻拍時，到「據點管理」更換金鑰後重印。
+      ${DEMO ? '<b>示範模式印出的標籤會加上「樣張」字樣，不能用於正式巡邏。</b>' : ''}</div>
+    <div class="filters">
+      <label class="f">崗位<select id="lp">${opts([['', '全部'], ...CONFIG.POSTS.map(p => [p.id, p.label])])}</select></label>
+      <button class="btn vest" id="print">列印勾選的標籤</button></div>
+    <div class="pick-list">${cps.map(c => `<label class="chip"><input type="checkbox" class="pick" value="${c.id}" checked> ${esc(c.code)} ${esc(c.name)}</label>`).join('')}</div>
+    <div id="print-area" class="qsheet">${cps.map(label).join('')}</div>`;
+  const refresh = () => {
+    const post = $('#lp').value, on = new Set($$('.pick').filter(p => p.checked).map(p => p.value));
+    $$('.qlabel').forEach(l => { const c = cps.find(x => x.id === l.dataset.c); l.hidden = !on.has(c.id) || (post && c.post !== post); });
+  };
+  $('#lp').onchange = refresh;
+  $$('.pick').forEach(p => (p.onchange = refresh));
+  $('#print').onclick = () => { refresh(); window.print(); };
 };
 
 // ---------- 人員與裝置 ----------

@@ -22,6 +22,8 @@ export const CONFIG = {
   ABNORMAL_CATEGORIES: ['門窗沒鎖', '燈不亮', '漏水積水', '東西損壞', '可疑人員', '其他'],
   SEVERITIES: ['低', '中', '高', '緊急'],
   INCIDENT_HANDLING: ['已現場處理', '已通報主管', '已通報校安中心', '已通報總務處報修', '已報警'],
+  // QR 標籤底部的聯絡資訊（請替換為實際分機）
+  LABEL_CONTACT: '總務處 分機 ____',
   // 交班提醒：結束巡邏時只顯示提醒，不需勾選
   HANDOVER_REMINDERS: ['鑰匙串', '無線電', '手電筒', '門禁卡'],
 
