@@ -7,6 +7,7 @@ const tp = iso => new Date(new Date(iso).getTime() + TZ_MS);
 export const fmtDate = iso => { if (!iso) return ''; const d = tp(iso); return `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())}`; };
 export const fmtTime = iso => { if (!iso) return ''; const d = tp(iso); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
 export const fmtDT = iso => iso ? `${fmtDate(iso)} ${fmtTime(iso)}` : '';
+export const fmtTimeS = iso => { if (!iso) return ''; const d = tp(iso); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`; };
 
 // 勤務日：例如 dayStartHour = 6，則「10/21 勤務日」為 10/21 06:00 至 10/22 06:00（臺北時間）
 export function dutyWindow(day, dayStartHour = 6) {
@@ -56,6 +57,30 @@ export function applyWindow(patrols, scans, from, to) {
 }
 
 const pct = (a, b) => b ? `${(a / b * 100).toFixed(1)}%` : '—';
+
+// 打卡路徑紀錄：每位巡邏員依時間排列的開始、每個點的打卡（含 GPS）、異常回報與送出結果
+export const ROUTE_HEAD = ['日期', '崗位', '工號', '姓名', '時間', '動作', '第幾點', '巡邏點', '緯度', '經度', '定位誤差(公尺)', '距離巡邏點(公尺)', '與上一筆間隔(分鐘)', '註記', '地圖'];
+const mapLink = (lat, lng) => lat != null && lng != null ? { text: '開啟地圖', hyperlink: `https://www.google.com/maps?q=${lat},${lng}` } : '';
+export function routeRows(patrols, scans, incidents, { inWindow = () => true } = {}) {
+  const rows = [];
+  for (const p of [...patrols].sort((a, b) => (a.profile?.staff_no || '').localeCompare(b.profile?.staff_no || '') || a.started_at.localeCompare(b.started_at))) {
+    const ev = [];
+    if (inWindow(p.started_at)) ev.push({ t: p.started_at, act: '開始巡邏', lat: p.start_lat, lng: p.start_lng });
+    scans.filter(x => x.patrol_id === p.id).forEach(x => ev.push({ t: x.server_at, act: '掃描打卡', name: `${x.checkpoint?.code || ''} ${x.checkpoint?.name || ''}`.trim(),
+      lat: x.lat, lng: x.lng, acc: x.accuracy, dist: x.distance_m, note: (x.flags || []).map(flagLabel).join('、'), scan: true }));
+    incidents.filter(i => i.patrol_id === p.id).forEach(i => ev.push({ t: i.created_at, act: '回報異常', name: i.type, lat: i.lat, lng: i.lng, note: i.description }));
+    if (p.ended_at && inWindow(p.ended_at)) ev.push({ t: p.ended_at, act: '送出巡邏結果', note: (p.missed || []).length ? `未巡 ${p.missed.length} 點` : '' });
+    ev.sort((a, b) => a.t.localeCompare(b.t));
+    let n = 0, prev = null;
+    for (const e of ev) {
+      const gap = prev ? Math.round((new Date(e.t) - new Date(prev)) / 6000) / 10 : '';
+      rows.push([fmtDate(e.t), p.post || '', p.profile?.staff_no, p.profile?.name, fmtTimeS(e.t), e.act, e.scan ? ++n : '', e.name || '',
+        e.lat != null ? +Number(e.lat).toFixed(6) : '', e.lng != null ? +Number(e.lng).toFixed(6) : '', e.acc != null ? Math.round(e.acc) : '', e.dist ?? '', gap, e.note || '', mapLink(e.lat, e.lng)]);
+      prev = e.t;
+    }
+  }
+  return rows;
+}
 
 // data: { day, dayStartHour, patrols, scans, incidents, sos, checkpointNames }
 export function summarize(data) {
@@ -123,7 +148,9 @@ export function reportTables(data) {
       ...sos.map(x => [x.created_at, 'SOS', x.lat != null ? `${x.lat.toFixed(5)}, ${x.lng.toFixed(5)}` : '無定位', '緊急', '', x.profile?.name, x.acknowledged_at ? '已處理' : '未處理']),
     ].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(r => [fmtDT(r[0]), ...r.slice(1)]),
   };
-  return { summary, stats: s, patrolT, scanT, issueT };
+  const inWindow = iso => { const t = new Date(iso); return t >= w.from && t < w.to; };
+  const routeT = { head: ROUTE_HEAD, rows: routeRows(patrols, scans, incidents, { inWindow }) };
+  return { summary, stats: s, patrolT, scanT, issueT, routeT };
 }
 
 // 產生 Excel：表頭粗體、細框線、無底色
@@ -149,9 +176,32 @@ export async function buildWorkbook(ExcelJS, data, orgName = '') {
   ws.views = [{}];
   sheet('巡邏場次', t.patrolT.head, t.patrolT.rows, [11, 7, 9, 12, 18, 7, 7, 9, 9, 9, 30, 20, 24]);
   sheet('異常與事件', t.issueT.head, t.issueT.rows, [17, 10, 28, 8, 36, 12, 10]);
+  sheet('打卡路徑紀錄', t.routeT.head, t.routeT.rows, ROUTE_WIDTHS);
   sheet('定點紀錄明細', t.scanT.head, t.scanT.rows, [17, 9, 12, 9, 16, 7, 12, 8, 30, 10, 20, 9, 24, 7]);
   return wb;
 }
+
+const ROUTE_WIDTHS = [11, 7, 9, 12, 9, 12, 7, 22, 11, 11, 10, 11, 12, 28, 10];
+
+// 單趟巡邏的打卡路徑（管理後台「巡邏場次」下載用）：打卡路徑＋ GPS 軌跡點
+export async function buildPatrolWorkbook(ExcelJS, detail) {
+  const p = detail.patrol;
+  const wb = new ExcelJS.Workbook();
+  const thin = { style: 'thin', color: { argb: 'FF999999' } };
+  const border = { top: thin, left: thin, bottom: thin, right: thin };
+  const sheet = (name, head, rows, widths) => {
+    const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.addRow(head); rows.forEach(r => ws.addRow(r.map(v => v ?? '')));
+    ws.getRow(1).font = { bold: true };
+    ws.eachRow(row => row.eachCell({ includeEmpty: true }, c => { c.border = border; c.alignment = { vertical: 'top', wrapText: true }; }));
+    ws.columns.forEach((c, i) => { c.width = widths[i] ?? 12; });
+  };
+  sheet('打卡路徑', ROUTE_HEAD, routeRows([p], detail.scans, detail.incidents), ROUTE_WIDTHS);
+  sheet('GPS 軌跡點', ['時間', '緯度', '經度', '定位誤差(公尺)', '地圖'],
+    (detail.track || []).map(t => [`${fmtDate(t.at)} ${fmtTimeS(t.at)}`, +Number(t.lat).toFixed(6), +Number(t.lng).toFixed(6), t.accuracy != null ? Math.round(t.accuracy) : '', mapLink(t.lat, t.lng)]), [17, 11, 11, 12, 10]);
+  return wb;
+}
+export const patrolFileName = p => `patrol-route_${fmtDate(p.started_at)}_${p.profile?.staff_no || 'guard'}.xlsx`;
 
 // 檔名使用英數字，避免部分瀏覽器與郵件軟體把中文檔名改成「download」
 export const reportFileName = (day) => `patrol-daily-report_${day}.xlsx`;

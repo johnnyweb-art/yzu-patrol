@@ -3,7 +3,7 @@ import { CONFIG } from './config.js';
 import { api, DEMO } from './api.js';
 import { qrPayload } from './camera.js';
 import { flagLabel, FLAG_LABELS } from './rules.js';
-import { buildWorkbook, reportTables, reportFileName, targetReportDay, sendTimeLabel } from './report.js';
+import { buildWorkbook, buildPatrolWorkbook, patrolFileName, routeRows, ROUTE_HEAD, reportTables, reportFileName, targetReportDay, sendTimeLabel } from './report.js';
 import { $, $$, esc, ymd, hm, hms, dt, toast, getPosition, mins, downloadText, downloadBlob, csvCell } from './util.js';
 
 const P = {};
@@ -33,6 +33,10 @@ function openDialog(title, body) {
   if (!dlg.open) dlg.showModal();
   return $('#dlg-b');
 }
+
+// 示範模式說明：資料只存在這個瀏覽器
+const demoNote = () => DEMO ? `<div class="banner warn"><div><b>示範模式</b>：資料只存在「這個瀏覽器」裡。手機上送出的註冊申請與巡邏紀錄，
+  電腦的管理後台看不到；請在<b>同一支手機的同一個瀏覽器</b>開啟管理後台。正式上線（建立雲端資料庫）後，手機與電腦即可看到同一份資料。</div></div>` : '';
 
 // ---------- 地圖 ----------
 function makeMap(el, center) {
@@ -99,7 +103,7 @@ async function refreshBadges() {
 // ---------- 即時看板 ----------
 P.dash = async main => {
   const d = await refreshBadges() || await api.dashboard();
-  main.innerHTML = `<h1>即時看板</h1>
+  main.innerHTML = `<h1>即時看板</h1>${demoNote()}
     ${d.sos.map(s => `<div class="sosbar"><div><b>SOS 緊急求援</b>：${esc(s.profile?.staff_no)} ${esc(s.profile?.name)}・${hms(s.created_at)}
       ${s.lat != null ? `・<a style="color:#fff" href="https://www.google.com/maps?q=${s.lat},${s.lng}" target="_blank" rel="noopener">位置 ${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}</a>` : '・無定位'}</div>
       <button class="btn sm" data-ack="${s.id}">已處理</button></div>`).join('')}
@@ -183,7 +187,7 @@ P.report = async main => {
         <div class="kpi ${s.pendingReview ? 'alert' : ''}"><b>${s.pendingReview}</b><span>待覆核</span></div><div class="kpi ${s.sos ? 'alert' : ''}"><b>${s.sos}</b><span>SOS</span></div></div>
       <section class="stack"><h3>異常與事件</h3>${t.issueT.rows.length ? tbl(t.issueT.head, t.issueT.rows) : '<p class="empty card">本勤務日無異常與事件。</p>'}</section>
       <section class="stack"><h3>巡邏場次</h3>${t.patrolT.rows.length ? tbl(t.patrolT.head.slice(1, 12), t.patrolT.rows.map(r => r.slice(1, 12))) : '<p class="empty card">本勤務日沒有巡邏紀錄。</p>'}</section>
-      <div class="small">Excel 另含「定點紀錄明細」工作表，共 ${t.scanT.rows.length} 筆。</div>`;
+      <div class="small">Excel 另含「打卡路徑紀錄」（每位巡邏員依時間排列的打卡、GPS 位置與地圖連結，共 ${t.routeT.rows.length} 筆）與「定點紀錄明細」工作表。</div>`;
   };
   const tbl = (head, rows) => `<div class="tbl"><table><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</table></div>`;
   const runs = async () => {
@@ -237,9 +241,28 @@ P.patrols = async main => {
     <form class="filters" id="f"><label class="f">起日<input type="date" id="from" value="${daysAgo(7)}"></label>
       <label class="f">迄日<input type="date" id="to" value="${today()}"></label>
       <label class="f">人員<select id="user">${await peopleOpts()}</select></label>
-      <button class="btn">查詢</button><button type="button" class="btn ghost" id="csv">匯出 CSV</button></form>
+      <button class="btn">查詢</button><button type="button" class="btn ghost" id="csv">匯出 CSV</button>
+      <button type="button" class="btn vest" id="route-xlsx">下載打卡路徑紀錄（Excel）</button></form>
     <div id="out"></div>`;
   let rows = [];
+  $('#route-xlsx').onclick = async e => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = '產生中…';
+    try {
+      const details = [];
+      for (const p of rows) details.push(await api.patrolDetail(p.id));
+      const ExcelJS = await loadExcelJS();
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('打卡路徑紀錄', { views: [{ state: 'frozen', ySplit: 1 }] });
+      ws.addRow(ROUTE_HEAD);
+      routeRows(details.map(d => d.patrol), details.flatMap(d => d.scans), details.flatMap(d => d.incidents)).forEach(r => ws.addRow(r));
+      ws.getRow(1).font = { bold: true };
+      const thin = { style: 'thin', color: { argb: 'FF999999' } };
+      ws.eachRow(row => row.eachCell({ includeEmpty: true }, c => { c.border = { top: thin, left: thin, bottom: thin, right: thin }; }));
+      ws.columns.forEach((c, i) => { c.width = [11, 7, 9, 12, 9, 12, 7, 22, 11, 11, 10, 11, 12, 28, 10][i]; });
+      downloadBlob(`patrol-routes_${$('#from').value}_${$('#to').value}.xlsx`, new Blob([await wb.xlsx.writeBuffer()]));
+    } catch (err) { toast(err.message, 'bad'); }
+    btn.disabled = false; btn.textContent = '下載打卡路徑紀錄（Excel）';
+  };
   const run = async () => {
     rows = await api.listPatrols({ from: $('#from').value, to: $('#to').value, userId: $('#user').value });
     $('#out').innerHTML = rows.length ? `<div class="tbl"><table><tr><th>日期</th><th>人員</th><th>崗位／路線</th><th>時間</th><th>完成</th><th>異常</th><th>未巡</th><th>註記</th></tr>
@@ -272,6 +295,7 @@ async function patrolDialog(id) {
       <dt>生物辨識</dt><dd>${p.uv_ok ? '通過' : '<span class="chip warn">未通過</span>'}</dd>
       <dt>自拍確認</dt><dd>${{ ok: '已完成', missed: '<span class="chip warn">未完成</span>', none: '未要求' }[p.selfie_status] || esc(p.selfie_status)}</dd>
       ${p.handover_note || Object.keys(p.handover_items || {}).length ? `<dt>交接</dt><dd>${Object.entries(p.handover_items || {}).map(([k, v]) => `${esc(k)}${v ? '✓' : '✗'}`).join('　')}<br>${esc(p.handover_note || '')}</dd>` : ''}</dl>
+    <button class="btn vest" id="dl-route" style="align-self:flex-start">下載這趟打卡路徑（Excel）</button>
     <div class="map" id="pmap"></div>
     <div class="small">橘色圓圈為據點範圍；綠點為正常、紅點為異常；虛線為巡邏軌跡（${d.track.length} 個定位點）。</div>
     <div class="tbl"><table><tr><th>時間</th><th>據點</th><th>結果</th><th>距離</th><th>註記</th><th>照片</th></tr>
@@ -290,6 +314,10 @@ async function patrolDialog(id) {
   if (d.track.length) L.polyline(d.track.map(t => [t.lat, t.lng]), { color: '#2b6cb0', weight: 3, dashArray: '6 6' }).addTo(m);
   d.scans.forEach(s => { if (s.lat == null) return; L.circleMarker([s.lat, s.lng], { radius: 7, color: '#fff', weight: 2, fillColor: s.status === 'abnormal' ? '#c0392b' : '#1f7a4d', fillOpacity: 1 }).addTo(m).bindTooltip(`${hm(s.server_at)} ${s.checkpoint?.name || ''}`); bounds.push([s.lat, s.lng]); });
   if (bounds.length > 1) setTimeout(() => m.fitBounds(bounds, { padding: [30, 30] }), 200);
+  $('#dl-route').onclick = async () => {
+    try { const wb = await buildPatrolWorkbook(await loadExcelJS(), d); downloadBlob(patrolFileName(p), new Blob([await wb.xlsx.writeBuffer()])); }
+    catch (err) { toast(err.message, 'bad'); }
+  };
   loadPhotos(body);
 }
 
@@ -601,7 +629,8 @@ P.people = async main => {
   const [users, devs, regs] = await Promise.all([api.listProfiles(), api.listDevices(), api.listRegistrations({ status: 'pending' })]);
   people = users;
   const pend = devs.filter(d => d.status === 'pending');
-  main.innerHTML = `<h1>人員與裝置</h1>
+  main.innerHTML = `<h1>人員與裝置</h1>${demoNote()}
+    ${!regs.length ? '<section class="stack"><h3>待審核註冊申請</h3><p class="empty card">目前沒有待審核的申請。巡邏員在手機送出申請後，會出現在這裡。</p></section>' : ''}
     ${regs.length ? `<section class="stack"><h3>待審核註冊申請</h3><div class="tbl"><table><tr><th>工號</th><th>姓名</th><th>崗位</th><th>類型</th><th>手機號碼</th><th>裝置</th><th>申請時間</th><th></th></tr>
       ${regs.map(r => `<tr><td class="mono">${esc(r.staff_no)}</td><td>${esc(r.name)}</td><td>${postChip(r.post)}</td>
         <td>${r.kind === 'rebind' ? '<span class="chip warn">既有人員重新綁定</span>' : '<span class="chip vest">新人員</span>'}</td>
