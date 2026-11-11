@@ -153,8 +153,8 @@ export const api = {
       sb.from('devices').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       sb.from('selfies').select('id', { count: 'exact', head: true }).eq('result', 'pending'),
       sb.from('registration_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-      sb.from('patrols').select('id', { count: 'exact', head: true }).gte('started_at', today),
-      sb.from('scans').select('status,flags').gte('server_at', today).then(chk),
+      sb.from('patrols').select('id', { count: 'exact', head: true }).gte('started_at', today).is('voided_at', null),
+      sb.from('scans').select('status,flags, patrol:patrols!inner(voided_at)').gte('server_at', today).is('patrol.voided_at', null).then(chk),
       sb.from('incidents').select('id', { count: 'exact', head: true }).gte('created_at', today),
       routesWithPoints(false, false)]);
     return {
@@ -200,8 +200,10 @@ export const api = {
     chk(await sb.rpc('save_route', { p_id: id || null, p_name: name, p_mode: mode, p_active: active, p_point_ids: pointIds, p_post: post || null }));
   },
 
-  async listPatrols({ from, to, userId } = {}) {
+  // 已作廢的場次預設不列出；includeVoided 為 true 時一併列出（巡邏場次頁勾選「顯示已作廢」）
+  async listPatrols({ from, to, userId, includeVoided } = {}) {
     let q = sb.from('patrols').select(`*, scans(status,flags,server_at), incidents(id), ${prof('patrols')}`).order('started_at', { ascending: false }).limit(500);
+    if (!includeVoided) q = q.is('voided_at', null);
     if (from) q = q.gte('started_at', dayStart(from));
     if (to) q = q.lte('started_at', dayEnd(to));
     if (userId) q = q.eq('user_id', userId);
@@ -209,8 +211,9 @@ export const api = {
     return rows.map(p => summarize(p, routes));
   },
 
-  async queryScans({ from, to, userId, checkpointId, status, flaggedOnly, review } = {}) {
-    let q = sb.from('scans').select(`*, checkpoint:checkpoints(${CP_COLS}), ${prof('scans')}`).order('server_at', { ascending: false }).limit(2000);
+  async queryScans({ from, to, userId, checkpointId, status, flaggedOnly, review, includeVoided } = {}) {
+    let q = sb.from('scans').select(`*, checkpoint:checkpoints(${CP_COLS}), ${prof('scans')}, patrol:patrols!inner(voided_at)`).order('server_at', { ascending: false }).limit(2000);
+    if (!includeVoided) q = q.is('patrol.voided_at', null);
     if (from) q = q.gte('server_at', dayStart(from));
     if (to) q = q.lte('server_at', dayEnd(to));
     if (userId) q = q.eq('user_id', userId);
@@ -225,11 +228,11 @@ export const api = {
   },
 
   async listIncidents({ status, from, to } = {}) {
-    let q = sb.from('incidents').select(`*, ${prof('incidents')}`).order('created_at', { ascending: false }).limit(500);
+    let q = sb.from('incidents').select(`*, ${prof('incidents')}, patrol:patrols(voided_at)`).order('created_at', { ascending: false }).limit(500);
     if (status) q = q.eq('status', status);
     if (from) q = q.gte('created_at', dayStart(from));
     if (to) q = q.lte('created_at', dayEnd(to));
-    return chk(await q).map(i => ({ ...i, profile: i.profiles }));
+    return chk(await q).map(i => ({ ...i, profile: i.profiles, patrol_voided: !!i.patrol?.voided_at }));
   },
   async updateIncident(id, { status, resolution, assignedUnit, confirmedType }) {
     // 指派與覆核的人員、時間由資料庫觸發程序記錄
@@ -237,6 +240,7 @@ export const api = {
     if (status === 'closed') Object.assign(patch, { closed_by: await myId(), closed_at: new Date().toISOString() });
     chk(await sb.from('incidents').update(patch).eq('id', id));
   },
+  async voidPatrol(id, reason) { chk(await sb.rpc('void_patrol', { p_patrol_id: id, p_reason: reason })); },
   async ackSOS(id) { chk(await sb.from('sos_alerts').update({ acknowledged_by: await myId(), acknowledged_at: new Date().toISOString() }).eq('id', id)); },
 
   async listSelfies({ pendingOnly } = {}) {
@@ -314,8 +318,8 @@ export const api = {
     const F = from.toISOString(), T = to.toISOString();
     const [patrols, incidents, sos, routes, cps] = await Promise.all([
       sb.from('patrols').select(`*, scans(status,flags,server_at), incidents(id), ${prof('patrols')}`).gte('started_at', new Date(from.getTime() - 36 * 3600000).toISOString())
-        .lt('started_at', T).or(`ended_at.is.null,ended_at.gte.${F}`).order('started_at').then(chk),
-      sb.from('incidents').select(`*, ${prof('incidents')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
+        .lt('started_at', T).or(`ended_at.is.null,ended_at.gte.${F}`).is('voided_at', null).order('started_at').then(chk),
+      sb.from('incidents').select(`*, ${prof('incidents')}, patrol:patrols(voided_at)`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
       sb.from('sos_alerts').select(`*, ${prof('sos_alerts')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
       routesWithPoints(false, false),
       sb.from('checkpoints').select('id,code,name').then(chk)]);
@@ -325,7 +329,7 @@ export const api = {
     const w = applyWindow(patrols.map(p => summarize(p, routes)), scans.map(x => ({ ...x, profile: x.profiles })), from, to);
     return {
       day, dayStartHour: startHour, patrols: w.patrols, scans: w.scans,
-      incidents: incidents.map(i => ({ ...i, profile: i.profiles })),
+      incidents: incidents.filter(i => !i.patrol?.voided_at).map(i => ({ ...i, profile: i.profiles })),
       sos: sos.map(x => ({ ...x, profile: x.profiles })),
       checkpointNames: Object.fromEntries(cps.map(c => [c.id, `${c.code} ${c.name}`])),
     };

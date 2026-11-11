@@ -29,8 +29,8 @@ export async function loadReportData(db: any, day: string, dayStartHour: number)
   const chk = (r: { data: unknown; error: { message: string } | null }) => { if (r.error) throw new Error(r.error.message); return r.data as any[]; };
   const [patrols, incidents, sos, routes, cps] = await Promise.all([
     db.from('patrols').select(`*, ${prof('patrols')}`).gte('started_at', new Date(from.getTime() - 36 * 3600000).toISOString()).lt('started_at', T)
-      .or(`ended_at.is.null,ended_at.gte.${F}`).order('started_at').then(chk),
-    db.from('incidents').select(`*, ${prof('incidents')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
+      .or(`ended_at.is.null,ended_at.gte.${F}`).is('voided_at', null).order('started_at').then(chk),
+    db.from('incidents').select(`*, ${prof('incidents')}, patrol:patrols(voided_at)`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
     db.from('sos_alerts').select(`*, ${prof('sos_alerts')}`).gte('created_at', F).lt('created_at', T).order('created_at').then(chk),
     db.from('routes').select('id,name,route_points(checkpoint_id)').then(chk),
     db.from('checkpoints').select('id,code,name').then(chk),
@@ -47,7 +47,8 @@ export async function loadReportData(db: any, day: string, dayStartHour: number)
     day, dayStartHour,
     patrols: w.patrols,
     scans: w.scans,
-    incidents: incidents.map((i: any) => ({ ...i, profile: i.profiles })),
+    // 已作廢巡邏場次所屬的異常回報不列入日報表
+    incidents: incidents.filter((i: any) => !i.patrol?.voided_at).map((i: any) => ({ ...i, profile: i.profiles })),
     sos: sos.map((s: any) => ({ ...s, profile: s.profiles })),
     checkpointNames: Object.fromEntries(cps.map((c: any) => [c.id, `${c.code} ${c.name}`])),
   };

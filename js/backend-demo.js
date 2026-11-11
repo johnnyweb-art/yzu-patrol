@@ -105,6 +105,8 @@ function routeWithPoints(d, r, withToken = false) {
   return { ...r, points: pts };
 }
 
+// 已作廢巡邏場次的 id，用於排除日報表、統計與成效指標
+const voidedIds = d => new Set(d.patrols.filter(p => p.voided_at).map(p => p.id));
 function patrolSummary(d, p) {
   const r = d.routes.find(x => x.id === p.route_id);
   const sc = d.scans.filter(s => s.patrol_id === p.id);
@@ -279,7 +281,8 @@ export const api = {
     needStaff(); const d = load();
     const today = new Date().toDateString();
     const isToday = iso => new Date(iso).toDateString() === today;
-    const scansToday = d.scans.filter(s => isToday(s.server_at));
+    const voided = voidedIds(d);
+    const scansToday = d.scans.filter(s => isToday(s.server_at) && !voided.has(s.patrol_id));
     return {
       active: d.patrols.filter(p => p.status === 'active').map(p => patrolSummary(d, p)),
       sos: d.sos.filter(s => !s.acknowledged_at).map(s => ({ ...s, profile: pub(d.users.find(u => u.id === s.user_id)) })),
@@ -288,7 +291,7 @@ export const api = {
       pendingDevices: d.devices.filter(x => x.status === 'pending').length,
       pendingSelfies: d.selfies.filter(x => x.result === 'pending').length,
       pendingRegistrations: (d.registrations || []).filter(x => x.status === 'pending').length,
-      today: { patrols: d.patrols.filter(p => isToday(p.started_at)).length, scans: scansToday.length,
+      today: { patrols: d.patrols.filter(p => isToday(p.started_at) && !p.voided_at).length, scans: scansToday.length,
         abnormal: scansToday.filter(s => s.status === 'abnormal').length + d.incidents.filter(i => isToday(i.created_at)).length, flagged: scansToday.filter(s => s.flags.length).length },
     };
   },
@@ -338,15 +341,15 @@ export const api = {
     save(d);
   },
 
-  async listPatrols({ from, to, userId } = {}) {
+  async listPatrols({ from, to, userId, includeVoided } = {}) {
     needStaff(); const d = load();
-    return d.patrols.filter(p => inRange(p.started_at, from, to) && (!userId || p.user_id === userId))
+    return d.patrols.filter(p => inRange(p.started_at, from, to) && (!userId || p.user_id === userId) && (includeVoided || !p.voided_at))
       .sort((a, b) => b.started_at.localeCompare(a.started_at)).map(p => patrolSummary(d, p));
   },
 
-  async queryScans({ from, to, userId, checkpointId, status, flaggedOnly, review } = {}) {
-    needStaff(); const d = load();
-    return d.scans.filter(s => inRange(s.server_at, from, to) && (!userId || s.user_id === userId) && (!checkpointId || s.checkpoint_id === checkpointId)
+  async queryScans({ from, to, userId, checkpointId, status, flaggedOnly, review, includeVoided } = {}) {
+    needStaff(); const d = load(); const voided = voidedIds(d);
+    return d.scans.filter(s => (includeVoided || !voided.has(s.patrol_id)) && inRange(s.server_at, from, to) && (!userId || s.user_id === userId) && (!checkpointId || s.checkpoint_id === checkpointId)
       && (!status || s.status === status) && (!flaggedOnly || s.flags.length) && (!review || s.review_status === review))
       .sort((a, b) => b.server_at.localeCompare(a.server_at))
       .map(s => ({ ...s, checkpoint: d.checkpoints.find(c => c.id === s.checkpoint_id), profile: pub(d.users.find(u => u.id === s.user_id)) }));
@@ -360,7 +363,16 @@ export const api = {
   async listIncidents({ status, from, to } = {}) {
     needStaff(); const d = load();
     return d.incidents.filter(i => (!status || i.status === status) && inRange(i.created_at, from, to))
-      .sort((a, b) => b.created_at.localeCompare(a.created_at)).map(i => ({ ...i, profile: pub(d.users.find(u => u.id === i.user_id)) }));
+      .sort((a, b) => b.created_at.localeCompare(a.created_at)).map(i => ({ ...i, profile: pub(d.users.find(u => u.id === i.user_id)), patrol_voided: voidedIds(d).has(i.patrol_id) }));
+  },
+  async voidPatrol(id, reason) {
+    const u = needAdmin(), d = load();
+    if (!String(reason || '').trim()) throw new Error('請填寫作廢原因');
+    const p = d.patrols.find(x => x.id === id);
+    if (!p) throw new Error('找不到此巡邏場次');
+    if (p.voided_at) throw new Error('此巡邏場次已作廢');
+    Object.assign(p, { voided_at: nowIso(), voided_by: u.id, void_reason: String(reason).trim(), status: 'ended', ended_at: p.ended_at || nowIso() });
+    save(d);
   },
   async updateIncident(id, { status, resolution, assignedUnit, confirmedType }) {
     const u = needStaff(), d = load();
@@ -494,13 +506,13 @@ export const api = {
     const startHour = { ...DEFAULT_REPORT_SETTINGS, ...(d.report_settings || {}) }.day_start_hour;
     const { from, to } = dutyWindow(day, startHour);
     const inW = iso => { const t = new Date(iso); return t >= from && t < to; };
-    const overl = d.patrols.filter(p => patrolOverlaps(p, from, to)).sort((a, b) => a.started_at.localeCompare(b.started_at)).map(p => patrolSummary(d, p));
+    const overl = d.patrols.filter(p => !p.voided_at && patrolOverlaps(p, from, to)).sort((a, b) => a.started_at.localeCompare(b.started_at)).map(p => patrolSummary(d, p));
     const ids = new Set(overl.map(p => p.id));
     const w = applyWindow(overl, d.scans.filter(x => ids.has(x.patrol_id)).sort((a, b) => a.server_at.localeCompare(b.server_at))
       .map(x => ({ ...x, checkpoint: d.checkpoints.find(c => c.id === x.checkpoint_id), profile: pub(d.users.find(u => u.id === x.user_id)) })), from, to);
     return {
       day, dayStartHour: startHour, patrols: w.patrols, scans: w.scans,
-      incidents: d.incidents.filter(i => inW(i.created_at)).map(i => ({ ...i, profile: pub(d.users.find(u => u.id === i.user_id)) })),
+      incidents: d.incidents.filter(i => inW(i.created_at) && !voidedIds(d).has(i.patrol_id)).map(i => ({ ...i, profile: pub(d.users.find(u => u.id === i.user_id)) })),
       sos: d.sos.filter(x => inW(x.created_at)).map(x => ({ ...x, profile: pub(d.users.find(u => u.id === x.user_id)) })),
       checkpointNames: Object.fromEntries(d.checkpoints.map(c => [c.id, `${c.code} ${c.name}`])),
     };

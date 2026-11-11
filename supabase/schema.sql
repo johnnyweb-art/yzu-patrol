@@ -203,6 +203,27 @@ drop trigger if exists incidents_stamp on public.incidents;
 create trigger incidents_stamp before update on public.incidents
   for each row execute function public.incidents_stamp();
 
+-- 巡邏場次作廢：紀錄保留作為稽核證據，但不列入日報表、統計與成效指標。只有管理者可作廢，須填原因，作廢後不可恢復
+alter table public.patrols add column if not exists voided_at timestamptz;
+alter table public.patrols add column if not exists voided_by uuid references public.profiles(id);
+alter table public.patrols add column if not exists void_reason text;
+create or replace function public.void_patrol(p_patrol_id uuid, p_reason text) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_p patrols%rowtype;
+begin
+  if not is_admin() then raise exception '只有管理者可以作廢巡邏場次'; end if;
+  if coalesce(btrim(p_reason), '') = '' then raise exception '請填寫作廢原因'; end if;
+  select * into v_p from patrols where id = p_patrol_id for update;
+  if not found then raise exception '找不到此巡邏場次'; end if;
+  if v_p.voided_at is not null then raise exception '此巡邏場次已作廢'; end if;
+  -- 進行中的場次一併結束，巡邏員手機上尚未上傳的紀錄將無法再送出
+  update patrols set voided_at = now(), voided_by = auth.uid(), void_reason = btrim(p_reason),
+    status = 'ended', ended_at = coalesce(ended_at, now())
+  where id = p_patrol_id;
+end $$;
+revoke all on function public.void_patrol(uuid, text) from public, anon;
+grant execute on function public.void_patrol(uuid, text) to authenticated;
+
 create table if not exists public.sos_alerts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references public.profiles(id),

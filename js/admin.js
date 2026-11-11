@@ -244,6 +244,7 @@ P.patrols = async main => {
     <form class="filters" id="f"><label class="f">起日<input type="date" id="from" value="${daysAgo(7)}"></label>
       <label class="f">迄日<input type="date" id="to" value="${today()}"></label>
       <label class="f">人員<select id="user">${await peopleOpts()}</select></label>
+      <label class="f" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="voided">顯示已作廢</label>
       <button class="btn">查詢</button><button type="button" class="btn ghost" id="csv">匯出 CSV</button>
       <button type="button" class="btn vest" id="route-xlsx">下載打卡路徑紀錄（Excel）</button></form>
     <div id="out"></div>`;
@@ -267,27 +268,28 @@ P.patrols = async main => {
     btn.disabled = false; btn.textContent = '下載打卡路徑紀錄（Excel）';
   };
   const run = async () => {
-    rows = await api.listPatrols({ from: $('#from').value, to: $('#to').value, userId: $('#user').value });
+    rows = await api.listPatrols({ from: $('#from').value, to: $('#to').value, userId: $('#user').value, includeVoided: $('#voided').checked });
     $('#out').innerHTML = rows.length ? `<div class="tbl"><table><tr><th>日期</th><th>人員</th><th>崗位／路線</th><th>時間</th><th>完成</th><th>異常</th><th>未巡</th><th>註記</th></tr>
-      ${rows.map(p => `<tr class="click" data-id="${p.id}"><td class="mono">${ymd(p.started_at)}</td><td>${esc(p.profile?.name)}<div class="small mono">${esc(p.profile?.staff_no)}</div></td>
+      ${rows.map(p => `<tr class="click" data-id="${p.id}"${p.voided_at ? ' style="opacity:.55"' : ''}><td class="mono">${ymd(p.started_at)}${p.voided_at ? '<div><span class="chip bad">已作廢</span></div>' : ''}</td><td>${esc(p.profile?.name)}<div class="small mono">${esc(p.profile?.staff_no)}</div></td>
         <td>${postChip(p.post)}<div class="small">${esc(p.route_name)}</div></td>
         <td class="mono">${hm(p.started_at)}–${p.ended_at ? hm(p.ended_at) : '<span class="chip vest">進行中</span>'}</td>
         <td class="mono">${p.scan_count}/${p.point_count}</td><td>${p.abnormal_count || ''}</td><td>${p.missed?.length || ''}</td>
         <td>${flagsHtml(p.flags)}${p.flagged_count ? ` <span class="chip warn">紀錄待覆核 ${p.flagged_count}</span>` : ''}${p.is_sample ? ' <span class="chip">示例</span>' : ''}</td></tr>`).join('')}</table></div>`
       : '<p class="empty card">查無資料。</p>';
-    $$('#out [data-id]').forEach(r => r.onclick = () => patrolDialog(r.dataset.id));
+    $$('#out [data-id]').forEach(r => r.onclick = () => patrolDialog(r.dataset.id, run));
   };
   $('#f').onsubmit = e => { e.preventDefault(); run().catch(err => toast(err.message, 'bad')); };
+  $('#voided').onchange = () => run().catch(err => toast(err.message, 'bad'));
   $('#csv').onclick = () => {
-    const head = ['日期', '崗位', '工號', '姓名', '路線', '開始', '結束', '完成據點', '應巡據點', '異常回報', '未巡據點', '註記', '交接事項'];
+    const head = ['日期', '崗位', '工號', '姓名', '路線', '開始', '結束', '完成據點', '應巡據點', '異常回報', '未巡據點', '註記', '交接事項', '作廢時間', '作廢原因'];
     const body = rows.map(p => [ymd(p.started_at), p.post || '', p.profile?.staff_no, p.profile?.name, p.route_name, dt(p.started_at), dt(p.ended_at), p.scan_count, p.point_count,
-      p.abnormal_count, (p.missed || []).length, (p.flags || []).map(flagLabel).join('；'), p.handover_note]);
+      p.abnormal_count, (p.missed || []).length, (p.flags || []).map(flagLabel).join('；'), p.handover_note, p.voided_at ? dt(p.voided_at) : '', p.void_reason || '']);
     downloadText(`patrols_${$('#from').value}_${$('#to').value}.csv`, [head, ...body].map(r => r.map(csvCell).join(',')).join('\n'));
   };
   await run();
 };
 
-async function patrolDialog(id) {
+async function patrolDialog(id, onChange) {
   const body = openDialog('巡邏場次明細', '<p class="empty">載入中…</p>');
   const d = await api.patrolDetail(id);
   const p = d.patrol;
@@ -297,7 +299,9 @@ async function patrolDialog(id) {
       <dt>時間</dt><dd class="mono">${dt(p.started_at)} – ${p.ended_at ? hm(p.ended_at) : '進行中'}</dd><dt>完成</dt><dd>${p.scan_count}/${p.point_count}</dd>
       <dt>生物辨識</dt><dd>${p.uv_ok ? '通過' : '<span class="chip warn">未通過</span>'}</dd>
       <dt>自拍確認</dt><dd>${{ ok: '已完成', missed: '<span class="chip warn">未完成</span>', none: '未要求' }[p.selfie_status] || esc(p.selfie_status)}</dd>
-      ${p.handover_note || Object.keys(p.handover_items || {}).length ? `<dt>交接</dt><dd>${Object.entries(p.handover_items || {}).map(([k, v]) => `${esc(k)}${v ? '✓' : '✗'}`).join('　')}<br>${esc(p.handover_note || '')}</dd>` : ''}</dl>
+      ${p.handover_note || Object.keys(p.handover_items || {}).length ? `<dt>交接</dt><dd>${Object.entries(p.handover_items || {}).map(([k, v]) => `${esc(k)}${v ? '✓' : '✗'}`).join('　')}<br>${esc(p.handover_note || '')}</dd>` : ''}
+      ${p.voided_at ? `<dt>作廢</dt><dd><span class="chip bad">已作廢</span> <span class="mono">${dt(p.voided_at)}</span>　${esc(people.find(u => u.id === p.voided_by)?.name || '')}<br>原因：${esc(p.void_reason || '')}</dd>` : ''}</dl>
+    ${p.voided_at ? '<div class="banner">此場次已作廢：紀錄保留供稽核，不列入日報表、統計與成效指標。</div>' : ''}
     <button class="btn vest" id="dl-route" style="align-self:flex-start">下載這趟打卡路徑（Excel）</button>
     <div class="map" id="pmap"></div>
     <div class="small">橘色圓圈為據點範圍；綠點為正常、紅點為異常；虛線為巡邏軌跡（${d.track.length} 個定位點）。</div>
@@ -308,7 +312,11 @@ async function patrolDialog(id) {
         <td>${flagsHtml(s.flags)} ${reviewChip(s.review_status)}</td><td><div class="photo-grid" data-photos="${esc(JSON.stringify(s.photo_paths || []))}"></div></td></tr>`).join('')}</table></div>
     ${p.missed?.length ? `<div class="card"><b>未巡據點</b>${p.missed.map(m => `<div>${esc(cpById[m.checkpoint_id]?.name || m.checkpoint_id)}：${esc(m.reason)}</div>`).join('')}</div>` : ''}
     ${d.selfies.length ? `<div class="card stack"><b>身分確認自拍</b><div class="photo-grid" data-photos="${esc(JSON.stringify(d.selfies.map(s => s.photo_path).filter(Boolean)))}"></div></div>` : ''}
-    ${d.incidents.length ? `<div class="card"><b>本場事件</b>${d.incidents.map(i => `<div>${hm(i.created_at)} ${esc(i.type)}：${esc(i.description)}</div>`).join('')}</div>` : ''}`;
+    ${d.incidents.length ? `<div class="card"><b>本場事件</b>${d.incidents.map(i => `<div>${hm(i.created_at)} ${esc(i.type)}：${esc(i.description)}</div>`).join('')}</div>` : ''}
+    ${isAdmin() && !p.voided_at ? `<section class="card stack" id="void-box"><b>作廢此場次</b>
+      <div class="small">用於測試資料或誤操作（例如誤按開始巡邏）。作廢後紀錄仍保留供稽核，但不列入日報表、統計與成效指標，且<b>不可恢復</b>。進行中的場次會一併結束。</div>
+      <label class="f">作廢原因（必填）<textarea id="void-reason" rows="2" placeholder="例如：系統測試資料"></textarea></label>
+      <button class="btn danger-outline" id="void-btn" style="align-self:flex-start">確認作廢</button></section>` : ''}`;
   const pts = d.route?.points || [];
   const first = pts.find(c => c.lat != null);
   const m = makeMap($('#pmap'), first ? [first.lat, first.lng] : null);
@@ -317,6 +325,14 @@ async function patrolDialog(id) {
   if (d.track.length) L.polyline(d.track.map(t => [t.lat, t.lng]), { color: '#2b6cb0', weight: 3, dashArray: '6 6' }).addTo(m);
   d.scans.forEach(s => { if (s.lat == null) return; L.circleMarker([s.lat, s.lng], { radius: 7, color: '#fff', weight: 2, fillColor: s.status === 'abnormal' ? '#c0392b' : '#1f7a4d', fillOpacity: 1 }).addTo(m).bindTooltip(`${hm(s.server_at)} ${s.checkpoint?.name || ''}`); bounds.push([s.lat, s.lng]); });
   if (bounds.length > 1) setTimeout(() => m.fitBounds(bounds, { padding: [30, 30] }), 200);
+  $('#void-btn')?.addEventListener('click', async e => {
+    const btn = e.currentTarget, reason = $('#void-reason').value.trim();
+    if (!reason) return toast('請填寫作廢原因', 'bad');
+    if (!confirm(`確定作廢 ${p.profile?.name || ''} ${dt(p.started_at)} 的巡邏場次？作廢後不可恢復。`)) return;
+    btn.disabled = true;
+    try { await api.voidPatrol(p.id, reason); toast('已作廢'); dlg.close(); onChange?.(); }
+    catch (err) { toast(err.message, 'bad'); btn.disabled = false; }
+  });
   $('#dl-route').onclick = async () => {
     try { const wb = await buildPatrolWorkbook(await loadExcelJS(), d); downloadBlob(patrolFileName(p), new Blob([await wb.xlsx.writeBuffer()])); }
     catch (err) { toast(err.message, 'bad'); }
@@ -388,7 +404,7 @@ P.incidents = async main => {
     const rows = await api.listIncidents({ status: $('#st').value, from: $('#from').value, to: $('#to').value });
     $('#out').innerHTML = rows.length ? `<div class="tbl"><table><tr><th>時間</th><th>類型</th><th>描述</th><th>回報人</th><th>權責單位</th><th>狀態</th></tr>
       ${rows.map(i => `<tr class="click" data-id="${i.id}"><td class="mono">${dt(i.created_at)}</td><td>${esc(i.confirmed_type || i.type)}<div class="small">${i.confirmed_type ? '已覆核' : '待覆核'}・${esc(i.severity || '')}</div></td>
-        <td>${esc(i.description)}</td><td>${esc(i.profile?.name)}</td><td>${esc(i.assigned_unit || '未指派')}</td><td>${incStatus[i.status]}${i.is_sample ? ' <span class="chip">示例</span>' : ''}</td></tr>`).join('')}</table></div>`
+        <td>${esc(i.description)}</td><td>${esc(i.profile?.name)}</td><td>${esc(i.assigned_unit || '未指派')}</td><td>${incStatus[i.status]}${i.is_sample ? ' <span class="chip">示例</span>' : ''}${i.patrol_voided ? ' <span class="chip">場次已作廢</span>' : ''}</td></tr>`).join('')}</table></div>`
       : '<p class="empty card">查無事件。</p>';
     $$('#out [data-id]').forEach(r => r.onclick = () => {
       const i = rows.find(x => x.id === r.dataset.id);
@@ -452,7 +468,7 @@ P.stats = async main => {
   };
   const run = async () => {
     const [scans, patrols, incs] = await Promise.all([api.queryScans({ from: $('#from').value, to: $('#to').value }), api.listPatrols({ from: $('#from').value, to: $('#to').value }),
-      api.listIncidents({ from: $('#from').value, to: $('#to').value })]);
+      api.listIncidents({ from: $('#from').value, to: $('#to').value }).then(xs => xs.filter(i => !i.patrol_voided))]);
     const count = (arr, key) => Object.entries(arr.reduce((m, x) => { const k = key(x); if (k) m[k] = (m[k] || 0) + 1; return m; }, {})).sort((a, b) => b[1] - a[1]);
     const abn = scans.filter(s => s.status === 'abnormal');
     const ended = patrols.filter(p => p.status === 'ended');

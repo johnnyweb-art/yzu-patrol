@@ -825,7 +825,7 @@ V.history = async () => {
   const rows = await api.myPatrols();
   html(`<h2>我的巡查紀錄</h2><div class="small">只顯示本人的巡邏紀錄。</div>
     ${rows.length ? rows.map(r => `<button class="card" data-id="${r.id}" style="text-align:left;font:inherit;color:inherit;cursor:pointer">
-      <div style="display:flex;justify-content:space-between;gap:8px"><b>${ymd(r.started_at)} ${esc(postLabel(r.post))}</b>${r.status === 'active' ? '<span class="chip vest">進行中</span>' : r.is_sample ? '<span class="chip">示例</span>' : ''}</div>
+      <div style="display:flex;justify-content:space-between;gap:8px"><b>${ymd(r.started_at)} ${esc(postLabel(r.post))}</b>${r.voided_at ? '<span class="chip">已作廢</span>' : r.status === 'active' ? '<span class="chip vest">進行中</span>' : r.is_sample ? '<span class="chip">示例</span>' : ''}</div>
       <div class="small">${esc(r.route_name)}・${hm(r.started_at)}–${r.ended_at ? hm(r.ended_at) : '—'}</div>
       <div class="flags" style="margin-top:6px"><span class="chip">完成 ${r.scan_count}/${r.point_count}</span>
         ${r.abnormal_count ? `<span class="chip bad">異常 ${r.abnormal_count}</span>` : ''}
