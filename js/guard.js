@@ -317,10 +317,10 @@ const stampLines = (title) => {
 V.welcome = () => {
   html(`
     <div><div class="eyebrow">${esc(CONFIG.ORG_NAME)}・總務處</div><h2>校園巡邏</h2></div>
-    <p style="margin:0">巡邏員第一次使用請先申請註冊。班長核准後，每次只要掃臉就能報到並開始巡邏。</p>
+    <p style="margin:0">巡邏員第一次使用請先申請註冊。管理者核准後，每次只要掃臉就能開始巡邏。</p>
     <button class="btn vest block" id="w-reg">第一次使用：申請註冊</button>
-    <button class="btn ghost block" id="w-pw">用工號密碼登入（班長、管理者）</button>
-    ${DEMO ? `<div class="banner demo"><div><b>示範模式</b>：可直接申請註冊，再用電腦開啟管理後台，以班長 <span class="mono">S001</span>／密碼 <span class="mono">demo1234</span> 核准，體驗完整流程。</div></div>` : ''}`);
+    <button class="btn ghost block" id="w-pw">用工號密碼登入（管理者、班長）</button>
+    ${DEMO ? `<div class="banner demo"><div><b>示範模式</b>：可直接申請註冊，送出後按「模擬管理者核准」即可繼續；也可用管理者 <span class="mono">A001</span>／密碼 <span class="mono">demo1234</span> 開啟管理後台核准。</div></div>` : ''}`);
   $('#w-reg').onclick = () => go('register');
   $('#w-pw').onclick = () => go('login');
 };
@@ -333,7 +333,7 @@ const privacyText = () => `${esc(CONFIG.ORG_NAME)}為執行校園安全巡查，
 V.register = async () => {
   const ok = await wa.supported();
   html(`<button class="btn ghost sm" id="back" style="align-self:flex-start">← 返回</button>
-    <div><h2>申請註冊</h2><div class="small">填好後按最下面的按鈕，再看著手機掃臉。班長核准後就能使用。</div></div>
+    <div><h2>申請註冊</h2><div class="small">填好後按最下面的按鈕，再看著手機掃臉。管理者核准後就能使用。</div></div>
     ${!ok ? `<div class="banner warn">這支手機無法使用臉部辨識。iPhone 請用 Safari、Android 請用 Chrome 開啟，並確認手機已設定 Face ID 或指紋。</div>` : ''}
     <form id="rf" class="stack" novalidate>
       <div class="stack" style="gap:6px"><b>我的崗位</b>
@@ -370,16 +370,16 @@ V.pending = () => {
   const pk = PK.get(); if (!pk) return go('welcome');
   html(`<h2>申請已送出</h2>
     <div class="card"><dl class="kv"><dt>崗位</dt><dd>${esc(postLabel(pk.post))}</dd><dt>工號</dt><dd class="mono">${esc(pk.staffNo)}</dd><dt>姓名</dt><dd>${esc(pk.name)}</dd><dt>送出時間</dt><dd class="mono">${dt(pk.at)}</dd></dl></div>
-    <div id="st"><p style="margin:0">請告訴班長「我已經申請了」。班長核准後，這個畫面會自動換到下一步。</p></div>
+    <div id="st"><p style="margin:0">請告訴管理者「我已經申請了」。核准後，這個畫面會自動換到下一步。</p></div>
     <button class="btn vest block big" id="chk">重新檢查</button>
     <button class="btn ghost block" id="redo">取消申請，重新填寫</button>
-    ${DEMO ? `<div class="banner demo stack" style="align-items:stretch"><div><b>示範模式</b>：沒有班長可以核准時，按下面的按鈕模擬班長核准。正式版沒有這個按鈕。</div>
-      <button class="btn block" id="demo-ok">模擬班長核准</button></div>` : ''}`);
+    ${DEMO ? `<div class="banner demo stack" style="align-items:stretch"><div><b>示範模式</b>：按下面的按鈕模擬管理者核准。正式版沒有這個按鈕。</div>
+      <button class="btn block" id="demo-ok">模擬管理者核准</button></div>` : ''}`);
   const check = async manual => {
     const r = await api.registrationStatus(pk.requestId, S.deviceId);
     if (r.status === 'approved') { PK.set({ ...pk, status: 'approved' }); toast('申請已核准'); return go('unlock'); }
     if (r.status === 'rejected') {
-      $('#st').innerHTML = `<div class="banner bad"><div><b>申請沒有通過</b>：${esc(r.reason || '')}<br>請重新申請，或洽班長。</div></div>`;
+      $('#st').innerHTML = `<div class="banner bad"><div><b>申請沒有通過</b>：${esc(r.reason || '')}<br>請重新申請，或洽管理者。</div></div>`;
       $('#chk').hidden = true; $('#redo').textContent = '重新申請';
       return;
     }
@@ -389,7 +389,7 @@ V.pending = () => {
   $('#chk').onclick = () => check(true).catch(showError);
   $('#redo').onclick = () => { PK.set(null); go('register'); };
   $('#demo-ok')?.addEventListener('click', async () => {
-    try { await api.demoApproveAsSupervisor(pk.requestId); await check(true); } catch (e) { toast(e.message, 'bad'); }
+    try { await api.demoApproveAsAdmin(pk.requestId); await check(true); } catch (e) { toast(e.message, 'bad'); }
   });
   const t = setInterval(() => check(false).catch(() => {}), 15000);
   cleanup = () => clearInterval(t);
@@ -422,7 +422,7 @@ V.unlock = () => {
     <button class="btn vest block huge" id="u-start">掃臉，開始巡邏</button>
     <button class="btn ghost block" id="u-in">只進入，先不巡邏</button>
     <details class="card small"><summary>掃臉一直失敗？</summary>
-      <p>請確認手機的 Face ID 或指紋可以正常解鎖手機。換了新手機或重設 Face ID，需要重新申請，並請班長核准。</p>
+      <p>請確認手機的 Face ID 或指紋可以正常解鎖手機。換了新手機或重設 Face ID，需要重新申請，並請管理者核准。</p>
       <div class="stack"><button class="btn ghost block" id="u-re">重新申請這支手機</button>
       <button class="btn ghost block" id="u-pw">改用工號密碼登入</button></div></details>
     ${sosHtml()}`);
@@ -449,7 +449,7 @@ V.unlock = () => {
     try { await faceLogin(); await afterLogin(); } catch (err) { toast(err.message, 'bad'); busy(btn, false, '只進入，先不巡邏'); }
   };
   $('#u-re').onclick = e => {
-    if (e.currentTarget.dataset.armed !== '1') { e.currentTarget.dataset.armed = '1'; e.currentTarget.textContent = '再按一次確認（需要班長重新核准）'; return; }
+    if (e.currentTarget.dataset.armed !== '1') { e.currentTarget.dataset.armed = '1'; e.currentTarget.textContent = '再按一次確認（需要管理者重新核准）'; return; }
     PK.set(null); go('register');
   };
   $('#u-pw').onclick = () => go('login');
@@ -516,11 +516,11 @@ async function afterLogin() {
 V.device = st => {
   html(`<h2>這支手機還不能使用</h2>
     <div class="card stack">
-      <p style="margin:0">${st === 'revoked' ? '這支手機已被班長停用。' : '您的帳號已經綁定另一支手機。每個人只能用一支手機巡邏。'}</p>
-      <p style="margin:0">如果換了手機，請告訴班長，到管理後台「人員與裝置」核准這支手機。</p>
+      <p style="margin:0">${st === 'revoked' ? '這支手機已被管理者停用。' : '您的帳號已經綁定另一支手機。每個人只能用一支手機巡邏。'}</p>
+      <p style="margin:0">如果換了手機，請告訴管理者，到管理後台「人員與裝置」核准這支手機。</p>
       <dl class="kv"><dt>手機代碼</dt><dd class="mono">${esc(S.deviceId.slice(0, 8))}</dd><dt>手機類型</dt><dd>${esc(deviceLabel())}</dd></dl>
     </div>
-    <button class="btn vest block big" id="retry">班長已核准，重新檢查</button>
+    <button class="btn vest block big" id="retry">管理者已核准，重新檢查</button>
     <button class="btn ghost block" id="out">登出</button>`);
   $('#retry').onclick = () => afterLogin().catch(showError);
   $('#out').onclick = async () => { await api.logout(); S.profile = null; go(faceReady() ? 'unlock' : 'welcome'); };

@@ -606,13 +606,13 @@ P.people = async main => {
       ${regs.map(r => `<tr><td class="mono">${esc(r.staff_no)}</td><td>${esc(r.name)}</td><td>${postChip(r.post)}</td>
         <td>${r.kind === 'rebind' ? '<span class="chip warn">既有人員重新綁定</span>' : '<span class="chip vest">新人員</span>'}</td>
         <td class="mono">${esc(r.phone || '—')}</td><td>${esc(r.device_label || '')}<div class="small mono">${esc(String(r.device_id).slice(0, 8))}</div></td>
-        <td class="mono">${dt(r.created_at)}</td><td><div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-reg="${r.id}">核准</button>
-        <button class="btn sm ghost" data-rej="${r.id}">退回</button></div></td></tr>`).join('')}</table></div>
-      <div class="small">請確認工號、姓名與本人相符後再核准。核准後，該人員只能用這支手機掃臉登入；「重新綁定」會讓他原本的手機失效。</div></section>` : ''}
+        <td class="mono">${dt(r.created_at)}</td><td>${isAdmin() ? `<div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-reg="${r.id}">核准</button>
+        <button class="btn sm ghost" data-rej="${r.id}">退回</button></div>` : '<span class="small">待管理者核准</span>'}</td></tr>`).join('')}</table></div>
+      <div class="small">只有管理者可以核准。請確認工號、姓名與本人相符後再核准。核准後，該人員只能用這支手機掃臉登入；「重新綁定」會讓他原本的手機失效。</div></section>` : ''}
     ${pend.length ? `<section class="stack"><h3>待核准手機</h3><div class="tbl"><table><tr><th>人員</th><th>裝置</th><th>申請時間</th><th></th></tr>
       ${pend.map(d => `<tr><td>${esc(d.profile?.staff_no)} ${esc(d.profile?.name)}</td><td>${esc(d.label)}<div class="small mono">${esc(d.device_id.slice(0, 8))}</div></td>
-        <td class="mono">${dt(d.created_at)}</td><td><div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-dev="${d.id}" data-s="active">核准（停用舊機）</button>
-        <button class="btn sm ghost" data-dev="${d.id}" data-s="revoked">拒絕</button></div></td></tr>`).join('')}</table></div>
+        <td class="mono">${dt(d.created_at)}</td><td>${isAdmin() ? `<div class="row" style="flex-wrap:nowrap"><button class="btn sm" data-dev="${d.id}" data-s="active">核准（停用舊機）</button>
+        <button class="btn sm ghost" data-dev="${d.id}" data-s="revoked">拒絕</button></div>` : '<span class="small">待管理者核准</span>'}</td></tr>`).join('')}</table></div>
       <div class="small">核准前請確認是本人換機。核准後，該人員原本綁定的手機會自動停用。</div></section>` : ''}
     <section class="stack"><h3>人員</h3><div class="tbl"><table><tr><th>工號</th><th>姓名</th><th>崗位</th><th>角色</th><th>狀態</th><th>使用中手機</th>${isAdmin() ? '<th></th>' : ''}</tr>
       ${users.map(u => { const d = devs.find(x => x.user_id === u.id && x.status === 'active');
@@ -620,7 +620,7 @@ P.people = async main => {
         <td>${isAdmin() ? `<select data-post="${u.id}" aria-label="崗位">${postOpts(u.post, '未指定')}</select>` : postChip(u.post)}</td>
         <td>${isAdmin() ? `<select data-role="${u.id}" aria-label="角色">${opts([['guard', '巡邏員'], ['supervisor', '班長'], ['admin', '管理者']], u.role)}</select>` : roleName[u.role]}</td>
         <td>${isAdmin() ? `<select data-act="${u.id}" aria-label="狀態">${opts([['1', '在職'], ['0', '停用']], u.active ? '1' : '0')}</select>` : (u.active ? '在職' : '停用')}</td>
-        <td>${d ? `${esc(d.label)} <button class="btn sm ghost" data-dev="${d.id}" data-s="revoked">停用此手機</button>` : '<span class="small">尚未綁定</span>'}</td>
+        <td>${d ? `${esc(d.label)}${isAdmin() ? ` <button class="btn sm ghost" data-dev="${d.id}" data-s="revoked">停用此手機</button>` : ''}` : '<span class="small">尚未綁定</span>'}</td>
         ${isAdmin() ? `<td><button class="btn sm ghost" data-pw="${u.id}">重設密碼</button></td>` : ''}</tr>`; }).join('')}</table></div></section>
     ${isAdmin() ? `<section class="card stack"><h3>新增人員</h3>
       <form id="uf" class="row"><label class="f">工號<input id="u-no" required placeholder="例：G1030"></label><label class="f">姓名<input id="u-name" required></label>

@@ -1,4 +1,4 @@
-// 管理功能：審核巡邏員註冊（班長、管理者）；建立帳號、重設密碼、刪除過期照片（限管理者）。
+// 管理功能（限管理者）：審核巡邏員註冊、建立帳號、重設密碼、刪除過期照片。
 // 部署：supabase functions deploy admin
 // 需要伺服器端金鑰（SUPABASE_SERVICE_ROLE_KEY），由 Supabase 自動提供，不會出現在前端。
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
@@ -22,11 +22,9 @@ Deno.serve(async (req) => {
 
     const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
     const { data: me } = await admin.from('profiles').select('role,active').eq('id', user.id).single();
-    if (!me?.active || !['supervisor', 'admin'].includes(me.role)) return json({ error: '權限不足' }, 403);
+    if (!me?.active || me.role !== 'admin') return json({ error: '僅限管理者' }, 403);
 
     const body = await req.json();
-    // 班長可審核巡邏員註冊；其餘功能限管理者
-    if (!['approveRegistration', 'rejectRegistration'].includes(body.action) && me.role !== 'admin') return json({ error: '僅限管理者' }, 403);
 
     if (body.action === 'approveRegistration') {
       const { data: r } = await admin.from('registration_requests').select('*').eq('id', body.request_id).single();

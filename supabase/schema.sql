@@ -390,7 +390,8 @@ create or replace function public.set_device_status(p_id uuid, p_status text) re
 language plpgsql security definer set search_path = public as $$
 declare v_user uuid;
 begin
-  if not is_staff() then raise exception '權限不足'; end if;
+  -- 手機核准限管理者（總務處決定，2026-11）
+  if not is_admin() then raise exception '僅限管理者'; end if;
   if p_status not in ('active','pending','revoked') then raise exception '狀態不正確'; end if;
   select user_id into v_user from devices where id = p_id;
   if p_status = 'active' then

@@ -311,7 +311,7 @@ export const api = {
     return d.devices.map(x => ({ ...x, profile: pub(d.users.find(u => u.id === x.user_id)) })).sort((a, b) => b.created_at.localeCompare(a.created_at));
   },
   async setDeviceStatus(id, status) {
-    const s = needStaff(), d = load();
+    const s = needAdmin(), d = load();
     const dev = d.devices.find(x => x.id === id);
     if (status === 'active') d.devices.filter(x => x.user_id === dev.user_id && x.status === 'active').forEach(x => (x.status = 'revoked'));
     Object.assign(dev, { status, decided_by: s.id, decided_at: nowIso() });
@@ -432,13 +432,13 @@ export const api = {
     needStaff();
     return (load().registrations || []).filter(r => !status || r.status === status).sort((a, b) => b.created_at.localeCompare(a.created_at));
   },
-  // 示範模式專用：在巡邏員手機上直接以示範班長身分核准，方便一個人測完整流程
-  async demoApproveAsSupervisor(id) {
-    const sup = load().users.find(u => u.role === 'supervisor' && u.active);
+  // 示範模式專用：在巡邏員手機上直接以示範管理者身分核准，方便一個人測完整流程
+  async demoApproveAsAdmin(id) {
+    const sup = load().users.find(u => u.role === 'admin' && u.active);
     return api.approveRegistration(id, sup);
   },
   async approveRegistration(id, actor) {
-    const s = actor || needStaff(), d = load();
+    const s = actor || needAdmin(), d = load();
     const r = (d.registrations || []).find(x => x.id === id);
     if (!r || r.status !== 'pending') throw new Error('此申請已處理或不存在');
     let u = d.users.find(x => x.staff_no === r.staff_no);
@@ -455,7 +455,7 @@ export const api = {
     save(d);
   },
   async rejectRegistration(id, reason) {
-    const s = needStaff(), d = load();
+    const s = needAdmin(), d = load();
     if (!String(reason || '').trim()) throw new Error('請填寫退回原因');
     const r = (d.registrations || []).find(x => x.id === id && x.status === 'pending');
     if (!r) throw new Error('此申請已處理或不存在');
