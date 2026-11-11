@@ -32,7 +32,8 @@
 - 2026-11-11 已完成（由 Claude 以 Management API 執行）：`schema.sql`、`seed.sql`（6 個示意據點）、Storage bucket `patrol-photos`（不公開）與存取規則、部署 admin（驗證 JWT）／passkey、daily-report（`--no-verify-jwt`）、設定 WEBAUTHN_RP_ID、WEBAUTHN_ORIGINS、LOGIN_EMAIL_DOMAIN、關閉公開註冊、`js/config.js` 填入專案 URL 與 anon key（網站已切換正式模式）。
 - 已建立第一位管理者 YZP001 陳懷傑（臨時密碼已交付，需首次登入後變更）。
 - 已設定 REPORT_CRON_SECRET 並啟用 `cron.sql` 排程（每 5 分鐘，逾時 30 秒），實測回應正常。
-- 尚未完成：Johnny 申請 Resend 並在 Supabase Edge Function Secrets 存入 RESEND_API_KEY；學校網域驗證後設定 REPORT_FROM；後台設定收件人並開啟自動寄送。
+- 已設定 RESEND_API_KEY；2026-11-11 手動測試日報表寄到 Johnny 的 Gmail（Resend 註冊信箱），收信正常。收件人暫設為該 Gmail，自動寄送尚未開啟。
+- 尚未完成：資訊處於 Resend 驗證學校網域後設定 REPORT_FROM，收件人改回學校信箱並加入其他收件人；開啟自動寄送。
 - 已知問題：`handle_new_user` 觸發時 app_metadata 尚未寫入，直接在 Supabase 後台新增的帳號會被建成 guard；經 admin 伺服器功能建立則正常。
 
 ## 3. 未完成事項與下一步
