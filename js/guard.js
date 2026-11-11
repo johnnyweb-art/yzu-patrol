@@ -20,6 +20,14 @@ const store = key => ({
 const PK = store('yzup-passkey');
 const LAST = store('yzup-last');   // 上次使用的路線，供一鍵開始巡邏
 const faceReady = () => PK.get()?.status === 'approved';
+async function doLogout() {
+  stopTracking(); keepAwake(false);
+  try { await api.logout(); } catch { /* 網路中斷時仍清除本機登入狀態 */ }
+  try { Object.keys(localStorage).filter(k => k.startsWith('sb-')).forEach(k => localStorage.removeItem(k)); } catch { /* 略過 */ }
+  Object.assign(S, { profile: null, patrol: null, scans: [], route: null, uvAt: 0 });
+  toast('已登出');
+  go(faceReady() ? 'unlock' : 'welcome', { loggedOut: true });
+}
 const postLabel = id => CONFIG.POSTS.find(p => p.id === id)?.label || id || '';
 let cleanup = null;
 
@@ -408,9 +416,10 @@ function pickRoute() {
   const last = LAST.get();
   return S.routes.find(r => r.id === last?.routeId) || (S.routes.length === 1 ? S.routes[0] : null);
 }
-V.unlock = () => {
+V.unlock = ({ loggedOut } = {}) => {
   const pk = PK.get(); if (!pk) return go('welcome');
   html(`
+    ${loggedOut ? '<div class="banner warn">已登出。這支手機仍綁定您的帳號，下次掃臉即可登入。</div>' : ''}
     <div style="text-align:center" class="stack">
       <svg width="96" height="96" viewBox="0 0 88 88" aria-hidden="true" style="margin:8px auto 0;display:block">
         <g fill="none" stroke="var(--vest)" stroke-width="5" stroke-linecap="round">
@@ -523,7 +532,7 @@ V.device = st => {
     <button class="btn vest block big" id="retry">管理者已核准，重新檢查</button>
     <button class="btn ghost block" id="out">登出</button>`);
   $('#retry').onclick = () => afterLogin().catch(showError);
-  $('#out').onclick = async () => { await api.logout(); S.profile = null; go(faceReady() ? 'unlock' : 'welcome'); };
+  $('#out').onclick = doLogout;
 };
 
 // ---------- 畫面：首頁（尚未開始巡邏） ----------
@@ -914,7 +923,7 @@ V.settings = async () => {
   });
   $('#logout').onclick = async e => {
     if (S.patrol && e.currentTarget.dataset.armed !== '1') { e.currentTarget.dataset.armed = '1'; e.currentTarget.textContent = '巡邏尚未結束，再按一次仍要登出'; return; }
-    stopTracking(); keepAwake(false); await api.logout(); Object.assign(S, { profile: null, patrol: null, scans: [], route: null, uvAt: 0 }); go(faceReady() ? 'unlock' : 'welcome');
+    doLogout();
   };
 };
 

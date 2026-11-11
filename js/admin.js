@@ -76,7 +76,12 @@ function shell() {
     </nav>
     <main class="main" id="main"></main></div>`;
   $$('.side [data-p]').forEach(b => b.addEventListener('click', () => show(b.dataset.p)));
-  $('#logout').onclick = async e => { e.preventDefault(); unsub?.(); await api.logout(); location.reload(); };
+  $('#logout').onclick = async e => {
+    e.preventDefault(); unsub?.();
+    try { await api.logout(); } catch { /* 網路中斷時仍清除本機登入狀態 */ }
+    try { Object.keys(localStorage).filter(k => k.startsWith('sb-')).forEach(k => localStorage.removeItem(k)); } catch { /* 略過 */ }
+    location.reload();
+  };
 }
 function badge(page, n) {
   const b = $(`#nav-${page} .badge`); if (!b) return;
