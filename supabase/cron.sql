@@ -11,6 +11,7 @@ select cron.schedule('patrol-daily-report', '4-59/5 * * * *', $$
   select net.http_post(
     url := 'https://<PROJECT_REF>.supabase.co/functions/v1/daily-report',
     headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', '<REPORT_CRON_SECRET>'),
+    timeout_milliseconds := 30000,
     body := '{}'::jsonb
   );
 $$);
