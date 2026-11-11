@@ -1,8 +1,8 @@
 // 系統設定。部署到正式環境時，只需修改本檔。
 // SUPABASE_URL 留空時，系統以「示範模式」運作：資料存於本機瀏覽器，不需任何伺服器。
 export const CONFIG = {
-  SUPABASE_URL: '',
-  SUPABASE_ANON_KEY: '',
+  SUPABASE_URL: 'https://bpvrvbybmulgjkvqtsqr.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwdnJ2YnlibXVsZ2prdnF0c3FyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQzNTY1ODUsImV4cCI6MjEwOTkzMjU4NX0.ecpqH8YUy39CwelWBMOXqnRQCMkrwzR4Gy5bPKW6D4c',
 
   ORG_NAME: '元智大學',
   APP_NAME: '校園巡邏',

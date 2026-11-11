@@ -28,9 +28,9 @@
 ## 2-1. 正式環境建置進度（2026-11-11）
 
 - Supabase 組織「元智校園智慧巡邏」、專案 `yzu-partol`（專案代碼 `bpvrvbybmulgjkvqtsqr`，區域 Singapore，免費方案）已由 Johnny 建立。
-- 專案選單出現兩個同名專案，需先確認是否重複建立，保留一個。
-- Supabase 管理金鑰已存入雲端環境「元智警衛巡邏」的 Network secrets（api.supabase.com），需在**新的工作階段**才會生效。
-- 下一步（由 Claude 執行）：以 Management API 執行 `supabase/schema.sql`、`seed.sql`（可略）、建立 Storage bucket、部署 admin／passkey／daily-report 三個 Edge Functions、設定 WEBAUTHN 相關 secrets、關閉公開註冊、建立第一位管理者、更新 `js/config.js` 的 SUPABASE_URL 與 anon key 後推送。
+- 已確認只有一個專案，無重複。
+- 2026-11-11 已完成（由 Claude 以 Management API 執行）：`schema.sql`、`seed.sql`（6 個示意據點）、Storage bucket `patrol-photos`（不公開）與存取規則、部署 admin（驗證 JWT）／passkey、daily-report（`--no-verify-jwt`）、設定 WEBAUTHN_RP_ID、WEBAUTHN_ORIGINS、LOGIN_EMAIL_DOMAIN、關閉公開註冊、`js/config.js` 填入專案 URL 與 anon key（網站已切換正式模式）。
+- 尚未完成：建立第一位管理者（待 Johnny 提供工號與姓名）；日報表寄信需 RESEND_API_KEY、REPORT_FROM、REPORT_CRON_SECRET，並執行 `supabase/cron.sql`。
 
 ## 3. 未完成事項與下一步
 
