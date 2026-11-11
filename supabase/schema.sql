@@ -164,6 +164,45 @@ create table if not exists public.incidents (
   closed_at timestamptz
 );
 
+-- 依總務處提案（AI 行政創新應用提案表）補充的成效衡量欄位，可對既有資料庫重複執行
+--   發現時間 discovered_at、通報時間 reported_at：衡量「異常事件回報時間」
+--   權責單位 assigned_unit、指派時間 assigned_at：衡量「異常案件追蹤率」
+--   人工分類 confirmed_type：班長覆核後的分類，作為日後 AI 分類正確率的比對基準
+alter table public.incidents add column if not exists discovered_at timestamptz;
+alter table public.incidents add column if not exists reported_at timestamptz;
+alter table public.incidents add column if not exists assigned_unit text;
+alter table public.incidents add column if not exists assigned_at timestamptz;
+alter table public.incidents add column if not exists assigned_by uuid references public.profiles(id);
+alter table public.incidents add column if not exists confirmed_type text;
+alter table public.incidents add column if not exists confirmed_at timestamptz;
+alter table public.incidents add column if not exists confirmed_by uuid references public.profiles(id);
+alter table public.incidents drop constraint if exists incidents_discovered_chk;
+alter table public.incidents add constraint incidents_discovered_chk
+  check ((discovered_at is null or discovered_at <= coalesce(reported_at, created_at) + interval '2 minutes')
+     and (reported_at is null or reported_at <= created_at + interval '2 minutes'));
+
+-- 指派與覆核的人員、時間一律由伺服器記錄，前端無法自行填寫
+create or replace function public.incidents_stamp() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.assigned_unit is distinct from old.assigned_unit then
+    new.assigned_at := case when new.assigned_unit is null then null else now() end;
+    new.assigned_by := case when new.assigned_unit is null then null else auth.uid() end;
+  else
+    new.assigned_at := old.assigned_at; new.assigned_by := old.assigned_by;
+  end if;
+  if new.confirmed_type is distinct from old.confirmed_type then
+    new.confirmed_at := case when new.confirmed_type is null then null else now() end;
+    new.confirmed_by := case when new.confirmed_type is null then null else auth.uid() end;
+  else
+    new.confirmed_at := old.confirmed_at; new.confirmed_by := old.confirmed_by;
+  end if;
+  return new;
+end $$;
+drop trigger if exists incidents_stamp on public.incidents;
+create trigger incidents_stamp before update on public.incidents
+  for each row execute function public.incidents_stamp();
+
 create table if not exists public.sos_alerts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references public.profiles(id),
@@ -483,8 +522,8 @@ grant insert (code, name, type, lat, lng, radius_m, enforce_fence, checklist, mi
 grant update (code, name, type, lat, lng, radius_m, enforce_fence, checklist, min_photos, active, note, updated_at) on public.checkpoints to authenticated;
 grant update (name, role, active, phone) on public.profiles to authenticated;
 grant update (review_status, review_note, reviewed_by, reviewed_at) on public.scans to authenticated;
-grant insert (patrol_id, user_id, type, severity, handling, description, lat, lng, photo_paths) on public.incidents to authenticated;
-grant update (status, resolution, closed_by, closed_at) on public.incidents to authenticated;
+grant insert (patrol_id, user_id, type, severity, handling, description, lat, lng, photo_paths, discovered_at, reported_at) on public.incidents to authenticated;
+grant update (status, resolution, closed_by, closed_at, assigned_unit, confirmed_type) on public.incidents to authenticated;
 grant insert (user_id, patrol_id, lat, lng, accuracy) on public.sos_alerts to authenticated;
 grant update (acknowledged_by, acknowledged_at) on public.sos_alerts to authenticated;
 grant insert (patrol_id, user_id, at, lat, lng, accuracy) on public.track_points to authenticated;

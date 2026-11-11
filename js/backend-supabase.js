@@ -106,7 +106,8 @@ export const api = {
 
   async reportIncident(x) {
     return chk(await sb.from('incidents').insert({ patrol_id: x.patrolId || null, type: x.type, severity: x.severity, handling: x.handling,
-      description: x.description, lat: x.lat, lng: x.lng, photo_paths: x.photoPaths || [] }).select().single());
+      description: x.description, lat: x.lat, lng: x.lng, photo_paths: x.photoPaths || [],
+      discovered_at: x.discoveredAt || null, reported_at: x.reportedAt || null }).select().single());
   },
   async sendSOS(x) {
     return chk(await sb.from('sos_alerts').insert({ patrol_id: x.patrolId || null, lat: x.lat, lng: x.lng, accuracy: x.acc }).select().single());
@@ -230,8 +231,9 @@ export const api = {
     if (to) q = q.lte('created_at', dayEnd(to));
     return chk(await q).map(i => ({ ...i, profile: i.profiles }));
   },
-  async updateIncident(id, { status, resolution }) {
-    const patch = { status, resolution };
+  async updateIncident(id, { status, resolution, assignedUnit, confirmedType }) {
+    // 指派與覆核的人員、時間由資料庫觸發程序記錄
+    const patch = { status, resolution, assigned_unit: assignedUnit || null, confirmed_type: confirmedType || null };
     if (status === 'closed') Object.assign(patch, { closed_by: await myId(), closed_at: new Date().toISOString() });
     chk(await sb.from('incidents').update(patch).eq('id', id));
   },

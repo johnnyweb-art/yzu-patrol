@@ -695,12 +695,15 @@ V.abnormal = ({ cp } = {}) => {
   html(`<div><h2>回報異常</h2><div class="small">${cp ? `地點：${esc(cp.name)}` : '系統會自動附上您現在的位置'}</div></div>
     <b>發生什麼事？（點一下）</b>
     <div class="choices grid" role="radiogroup" aria-label="異常類別">${CONFIG.ABNORMAL_CATEGORIES.map(c => `<label class="choice"><input type="radio" name="cat" value="${esc(c)}"><span>${esc(c)}</span></label>`).join('')}</div>
+    <b>什麼時候發現的？</b>
+    <div class="choices grid" role="radiogroup" aria-label="發現時間">${CONFIG.DISCOVERED_AGO_MIN.map((m, k) => `<label class="choice"><input type="radio" name="ago" value="${m}"${k ? '' : ' checked'}><span>${m ? `約 ${m >= 60 ? `${m / 60} 小時` : `${m} 分鐘`}前` : '剛剛'}</span></label>`).join('')}</div>
     <button class="btn ghost block big" id="photo">拍照（可不拍）</button>
     <div class="stack" id="pw" hidden></div>
     <label class="f">補充說明（可不填）<textarea id="desc" rows="2" placeholder="可以用手機鍵盤的麥克風說話輸入"></textarea></label>
     <button class="btn vest block huge" id="send">送出</button>
     <button class="btn ghost block" id="back">取消</button>`);
   let pw = null;
+  const openedAt = Date.now();   // 開啟回報畫面的時間，作為「剛剛」發現的時間
   $('#photo').onclick = () => { $('#photo').hidden = true; $('#pw').hidden = false; pw = photoWidget($('#pw'), { lines: stampLines(cp ? `${cp.code} ${cp.name}` : '異常回報') }); };
   $('#back').onclick = () => go(S.patrol ? 'patrol' : 'home');
   $('#send').onclick = async e => {
@@ -709,9 +712,12 @@ V.abnormal = ({ cp } = {}) => {
     const btn = e.currentTarget; btn.disabled = true; btn.textContent = '送出中…';
     const pos = await locate(cp || null);
     const note = $('#desc').value.trim();
+    const ago = Number($('input[name=ago]:checked')?.value || 0);
+    const reportedAt = new Date().toISOString();
+    const discoveredAt = new Date(openedAt - ago * 60000).toISOString();
     try {
       const r = await submitOrQueue('incident', { patrolId: S.patrol?.id || null, type: cat, severity: '中', handling: '已通報主管',
-        description: `${cp ? `【${cp.code} ${cp.name}】` : ''}${note || cat}`, lat: pos?.lat ?? null, lng: pos?.lng ?? null, deviceAt: new Date().toISOString() },
+        description: `${cp ? `【${cp.code} ${cp.name}】` : ''}${note || cat}`, lat: pos?.lat ?? null, lng: pos?.lng ?? null, deviceAt: reportedAt, discoveredAt, reportedAt },
         (pw?.photos || []).map(p => p.blob), 'incident');
       if (cp) (S.reported = S.reported || new Set()).add(cp.id);
       toast(r.ok ? '已送出，班長會收到通知' : '沒有網路，已先存在手機');

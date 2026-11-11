@@ -67,7 +67,8 @@ function seed() {
     });
   });
   d.incidents.push({ id: uid(), patrol_id: null, user_id: 'u-g1025', created_at: new Date(now - day).toISOString(), type: '設施損壞', severity: '中', handling: '已通報總務處報修',
-    description: '示例：體育館東側路燈不亮', lat: cps[2].lat, lng: cps[2].lng, photo_paths: [], status: 'open', resolution: '', is_sample: true });
+    description: '示例：體育館東側路燈不亮', lat: cps[2].lat, lng: cps[2].lng, photo_paths: [], status: 'open', resolution: '', is_sample: true,
+    discovered_at: new Date(now - day - 10 * 60000).toISOString(), reported_at: new Date(now - day).toISOString() });
   return d;
 }
 
@@ -215,7 +216,8 @@ export const api = {
   async reportIncident(x) {
     const u = me(), d = load();
     const i = { id: uid(), patrol_id: x.patrolId || null, user_id: u.id, created_at: x.deviceAt || nowIso(), type: x.type, severity: x.severity, handling: x.handling,
-      description: x.description, lat: x.lat, lng: x.lng, photo_paths: x.photoPaths || [], status: 'open', resolution: '' };
+      description: x.description, lat: x.lat, lng: x.lng, photo_paths: x.photoPaths || [], status: 'open', resolution: '',
+      discovered_at: x.discoveredAt || null, reported_at: x.reportedAt || null };
     d.incidents.push(i); save(d);
     return i;
   },
@@ -360,9 +362,13 @@ export const api = {
     return d.incidents.filter(i => (!status || i.status === status) && inRange(i.created_at, from, to))
       .sort((a, b) => b.created_at.localeCompare(a.created_at)).map(i => ({ ...i, profile: pub(d.users.find(u => u.id === i.user_id)) }));
   },
-  async updateIncident(id, { status, resolution }) {
+  async updateIncident(id, { status, resolution, assignedUnit, confirmedType }) {
     const u = needStaff(), d = load();
     const i = d.incidents.find(x => x.id === id);
+    const unit = assignedUnit || null, ctype = confirmedType || null;
+    // 與正式模式的資料庫觸發程序一致：內容變更時才更新指派／覆核的人員與時間
+    if (unit !== (i.assigned_unit ?? null)) Object.assign(i, { assigned_unit: unit, assigned_at: unit && nowIso(), assigned_by: unit && u.id });
+    if (ctype !== (i.confirmed_type ?? null)) Object.assign(i, { confirmed_type: ctype, confirmed_at: ctype && nowIso(), confirmed_by: ctype && u.id });
     Object.assign(i, { status, resolution }, status === 'closed' ? { closed_by: u.id, closed_at: nowIso() } : {});
     save(d);
   },

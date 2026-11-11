@@ -141,11 +141,11 @@ export function reportTables(data) {
       x.category, x.severity, x.note, x.distance_m, (x.flags || []).map(flagLabel).join('、'), REVIEW_LABELS[x.review_status] || '', x.review_note, (x.photo_paths || []).length]),
   };
   const issueT = {
-    head: ['時間', '來源', '地點／類型', '嚴重度', '說明', '回報人', '處理狀態'],
+    head: ['時間', '來源', '地點／類型', '嚴重度', '說明', '回報人', '權責單位', '處理狀態'],
     rows: [
-      ...scans.filter(x => x.status === 'abnormal').map(x => [x.server_at, '定點巡查', `${x.checkpoint?.code} ${x.checkpoint?.name}・${x.category}`, x.severity, x.note, x.profile?.name, '']),
-      ...incidents.map(i => [i.created_at, '異常回報', i.type, i.severity, i.description, i.profile?.name, INCIDENT_STATUS[i.status] || i.status]),
-      ...sos.map(x => [x.created_at, 'SOS', x.lat != null ? `${x.lat.toFixed(5)}, ${x.lng.toFixed(5)}` : '無定位', '緊急', '', x.profile?.name, x.acknowledged_at ? '已處理' : '未處理']),
+      ...scans.filter(x => x.status === 'abnormal').map(x => [x.server_at, '定點巡查', `${x.checkpoint?.code} ${x.checkpoint?.name}・${x.category}`, x.severity, x.note, x.profile?.name, '', '']),
+      ...incidents.map(i => [i.created_at, '異常回報', i.confirmed_type || i.type, i.severity, i.description, i.profile?.name, i.assigned_unit || '未指派', INCIDENT_STATUS[i.status] || i.status]),
+      ...sos.map(x => [x.created_at, 'SOS', x.lat != null ? `${x.lat.toFixed(5)}, ${x.lng.toFixed(5)}` : '無定位', '緊急', '', x.profile?.name, '', x.acknowledged_at ? '已處理' : '未處理']),
     ].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(r => [fmtDT(r[0]), ...r.slice(1)]),
   };
   const inWindow = iso => { const t = new Date(iso); return t >= w.from && t < w.to; };
@@ -175,7 +175,7 @@ export async function buildWorkbook(ExcelJS, data, orgName = '') {
   ws.getRow(1).getCell(1).border = {};
   ws.views = [{}];
   sheet('巡邏場次', t.patrolT.head, t.patrolT.rows, [11, 7, 9, 12, 18, 7, 7, 9, 9, 9, 30, 20, 24]);
-  sheet('異常與事件', t.issueT.head, t.issueT.rows, [17, 10, 28, 8, 36, 12, 10]);
+  sheet('異常與事件', t.issueT.head, t.issueT.rows, [17, 10, 28, 8, 36, 12, 14, 10]);
   sheet('打卡路徑紀錄', t.routeT.head, t.routeT.rows, ROUTE_WIDTHS);
   sheet('定點紀錄明細', t.scanT.head, t.scanT.rows, [17, 9, 12, 9, 16, 7, 12, 8, 30, 10, 20, 9, 24, 7]);
   return wb;

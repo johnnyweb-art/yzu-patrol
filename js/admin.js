@@ -17,6 +17,9 @@ const flagsHtml = f => (f || []).map(x => `<span class="chip warn">${esc(flagLab
 const statusChip = s => s === 'abnormal' ? '<span class="chip bad">異常</span>' : '<span class="chip ok">正常</span>';
 const reviewChip = r => ({ pending: '<span class="chip warn">待覆核</span>', ok: '<span class="chip ok">已確認</span>', rejected: '<span class="chip bad">退回</span>' }[r] || '');
 const incStatus = { open: '未處理', processing: '處理中', closed: '已結案' };
+// 回報耗時（分鐘）：發現時間到通報時間，供提案成效指標「異常事件回報時間」使用
+const reportMin = i => i.discovered_at && i.reported_at ? Math.max(0, (new Date(i.reported_at) - new Date(i.discovered_at)) / 60000) : null;
+const fmtMin = m => m == null ? '—' : m < 1 ? '不到 1 分鐘' : `${Math.round(m)} 分鐘`;
 const roleName = { guard: '巡邏員', supervisor: '班長', admin: '管理者' };
 const postOpts = (sel, blank = '兩邊共用') => opts([['', blank], ...CONFIG.POSTS.map(p => [p.id, p.label])], sel || '');
 const POST_COLORS = ['#e8650c', '#2b6cb0', '#7b3fa0'];
@@ -383,24 +386,34 @@ P.incidents = async main => {
       <button class="btn">查詢</button></form><div id="out"></div>`;
   const run = async () => {
     const rows = await api.listIncidents({ status: $('#st').value, from: $('#from').value, to: $('#to').value });
-    $('#out').innerHTML = rows.length ? `<div class="tbl"><table><tr><th>時間</th><th>類型</th><th>描述</th><th>回報人</th><th>狀態</th></tr>
-      ${rows.map(i => `<tr class="click" data-id="${i.id}"><td class="mono">${dt(i.created_at)}</td><td>${esc(i.type)}<div class="small">${esc(i.severity || '')}・${esc(i.handling || '')}</div></td>
-        <td>${esc(i.description)}</td><td>${esc(i.profile?.name)}</td><td>${incStatus[i.status]}${i.is_sample ? ' <span class="chip">示例</span>' : ''}</td></tr>`).join('')}</table></div>`
+    $('#out').innerHTML = rows.length ? `<div class="tbl"><table><tr><th>時間</th><th>類型</th><th>描述</th><th>回報人</th><th>權責單位</th><th>狀態</th></tr>
+      ${rows.map(i => `<tr class="click" data-id="${i.id}"><td class="mono">${dt(i.created_at)}</td><td>${esc(i.confirmed_type || i.type)}<div class="small">${i.confirmed_type ? '已覆核' : '待覆核'}・${esc(i.severity || '')}</div></td>
+        <td>${esc(i.description)}</td><td>${esc(i.profile?.name)}</td><td>${esc(i.assigned_unit || '未指派')}</td><td>${incStatus[i.status]}${i.is_sample ? ' <span class="chip">示例</span>' : ''}</td></tr>`).join('')}</table></div>`
       : '<p class="empty card">查無事件。</p>';
     $$('#out [data-id]').forEach(r => r.onclick = () => {
       const i = rows.find(x => x.id === r.dataset.id);
       const body = openDialog(`事件：${i.type}`, `
         <dl class="kv"><dt>時間</dt><dd class="mono">${dt(i.created_at)}</dd><dt>回報人</dt><dd>${esc(i.profile?.staff_no)} ${esc(i.profile?.name)}</dd>
           <dt>嚴重度</dt><dd>${esc(i.severity || '')}</dd><dt>處置</dt><dd>${esc(i.handling || '')}</dd><dt>描述</dt><dd>${esc(i.description)}</dd>
-          <dt>位置</dt><dd>${i.lat != null ? `<a href="https://www.google.com/maps?q=${i.lat},${i.lng}" target="_blank" rel="noopener">${i.lat.toFixed(5)}, ${i.lng.toFixed(5)}</a>` : '—'}</dd></dl>
+          <dt>位置</dt><dd>${i.lat != null ? `<a href="https://www.google.com/maps?q=${i.lat},${i.lng}" target="_blank" rel="noopener">${i.lat.toFixed(5)}, ${i.lng.toFixed(5)}</a>` : '—'}</dd>
+          <dt>發現時間</dt><dd class="mono">${i.discovered_at ? dt(i.discovered_at) : '—'}</dd>
+          <dt>通報時間</dt><dd class="mono">${i.reported_at ? dt(i.reported_at) : '—'}（回報耗時 ${fmtMin(reportMin(i))}）</dd>
+          <dt>巡邏員初判</dt><dd>${esc(i.type)}</dd>
+          ${i.assigned_at ? `<dt>指派時間</dt><dd class="mono">${dt(i.assigned_at)}</dd>` : ''}
+          ${i.confirmed_at ? `<dt>覆核時間</dt><dd class="mono">${dt(i.confirmed_at)}</dd>` : ''}</dl>
         <div class="photo-grid" data-photos="${esc(JSON.stringify(i.photo_paths || []))}"></div>
+        <label class="f">覆核分類（班長確認後的事件類別）<select id="ictype">${opts([['', '尚未覆核'], ...[...new Set([...CONFIG.ABNORMAL_CATEGORIES, i.type, i.confirmed_type].filter(Boolean))].map(c => [c, c])], i.confirmed_type || '')}</select></label>
+        <label class="f">權責單位<input id="iunit" list="unit-list" value="${esc(i.assigned_unit || '')}" placeholder="選擇或輸入單位"><datalist id="unit-list">${CONFIG.RESPONSIBLE_UNITS.map(u => `<option value="${esc(u)}">`).join('')}</datalist></label>
         <label class="f">處理狀態<select id="ist">${opts([['open', '未處理'], ['processing', '處理中'], ['closed', '已結案']], i.status)}</select></label>
         <label class="f">處理說明<textarea id="ires" rows="3">${esc(i.resolution || '')}</textarea></label>
         <button class="btn vest" id="isave">儲存</button>`);
       loadPhotos(body);
       $('#isave').onclick = async () => {
-        if ($('#ist').value === 'closed' && !$('#ires').value.trim()) return toast('結案前請填寫處理說明', 'bad');
-        await api.updateIncident(i.id, { status: $('#ist').value, resolution: $('#ires').value.trim() });
+        const st = $('#ist').value, unit = $('#iunit').value.trim(), ctype = $('#ictype').value;
+        if (st !== 'open' && !unit) return toast('改為處理中或結案前，請先指派權責單位', 'bad');
+        if (st === 'closed' && !ctype) return toast('結案前請先覆核事件分類', 'bad');
+        if (st === 'closed' && !$('#ires').value.trim()) return toast('結案前請填寫處理說明', 'bad');
+        await api.updateIncident(i.id, { status: st, resolution: $('#ires').value.trim(), assignedUnit: unit, confirmedType: ctype });
         toast('已更新'); dlg.close(); run(); refreshBadges();
       };
     });
@@ -438,7 +451,8 @@ P.stats = async main => {
     return pairs.length ? pairs.map(([k, v]) => `<div class="bar"><span title="${esc(k)}">${esc(k)}</span><i style="width:${v / max * 70}%"></i><b class="mono">${v}${unit}</b></div>`).join('') : '<p class="empty">無資料</p>';
   };
   const run = async () => {
-    const [scans, patrols] = await Promise.all([api.queryScans({ from: $('#from').value, to: $('#to').value }), api.listPatrols({ from: $('#from').value, to: $('#to').value })]);
+    const [scans, patrols, incs] = await Promise.all([api.queryScans({ from: $('#from').value, to: $('#to').value }), api.listPatrols({ from: $('#from').value, to: $('#to').value }),
+      api.listIncidents({ from: $('#from').value, to: $('#to').value })]);
     const count = (arr, key) => Object.entries(arr.reduce((m, x) => { const k = key(x); if (k) m[k] = (m[k] || 0) + 1; return m; }, {})).sort((a, b) => b[1] - a[1]);
     const abn = scans.filter(s => s.status === 'abnormal');
     const ended = patrols.filter(p => p.status === 'ended');
@@ -449,12 +463,24 @@ P.stats = async main => {
       m[k].n++; m[k].done += p.scan_count; m[k].total += p.point_count; m[k].flagged += p.flagged_count + (p.flags?.length ? 1 : 0);
       return m;
     }, {}));
+    const confirmed = incs.filter(i => i.confirmed_type);
+    const kpi = (v, label) => `<div class="kpi"><b>${v}</b><span>${label}</span></div>`;
+    const pct = (a, b) => b ? `${(a / b * 100).toFixed(1)}%` : '—';
+    const avg = xs => { const v = xs.filter(x => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
     const hours = Array.from({ length: 24 }, (_, h) => [`${String(h).padStart(2, '0')} 時`, abn.filter(s => new Date(s.server_at).getHours() === h).length]).filter(x => x[1]);
     $('#out').innerHTML = `
       <div class="kpis"><div class="kpi"><b>${patrols.length}</b><span>巡邏場次</span></div><div class="kpi"><b>${scans.length}</b><span>定點紀錄</span></div>
         <div class="kpi"><b>${abn.length}</b><span>異常件數</span></div><div class="kpi"><b>${rate}${rate === '—' ? '' : '%'}</b><span>平均據點完成率</span></div>
         <div class="kpi"><b>${scans.filter(s => s.flags?.length).length}</b><span>有註記紀錄</span></div></div>
+      <section class="stack"><h3>提案成效指標（異常回報）</h3>
+        <div class="kpis">${kpi(incs.length, '異常回報件數')}${kpi(fmtMin(avg(incs.map(reportMin))), '平均回報耗時（發現到通報）')}
+          ${kpi(pct(incs.filter(i => i.assigned_unit && i.status !== 'open').length, incs.length), '案件追蹤率（已指派且處理中或結案）')}
+          ${kpi(pct(confirmed.length, incs.length), '分類覆核完成率')}
+          ${kpi(pct(confirmed.filter(i => i.confirmed_type === i.type).length, confirmed.length), '巡邏員初判與覆核一致率')}</div>
+        <p class="small">回報耗時只計入有填寫發現時間的事件。「初判與覆核一致率」可作為日後 AI 分類正確率的比較基準。</p></section>
       <div class="grid2">
+        <section class="card stack"><b>權責單位分布</b>${bars(count(incs, i => i.assigned_unit || '未指派'))}</section>
+        <section class="card stack"><b>異常回報類別（覆核後）</b>${bars(count(incs, i => i.confirmed_type || `${i.type}（待覆核）`))}</section>
         <section class="card stack"><b>異常熱點（依據點）</b>${bars(count(abn, s => `${s.checkpoint?.code} ${s.checkpoint?.name}`))}</section>
         <section class="card stack"><b>異常類別</b>${bars(count(abn, s => s.category))}</section>
         <section class="card stack"><b>異常發生時段</b>${bars(hours)}</section>
