@@ -25,6 +25,13 @@
 | 有未巡點時無法送出，去不了的點一鍵標記「無法巡邏」 | 使用者指定；兼顧完整性與現場例外 |
 | 交接事項只做提醒，不需勾選 | 總務處意見 |
 
+## 2-1. 正式環境建置進度（2026-11-11）
+
+- Supabase 組織「元智校園智慧巡邏」、專案 `yzu-partol`（專案代碼 `bpvrvbybmulgjkvqtsqr`，區域 Singapore，免費方案）已由 Johnny 建立。
+- 專案選單出現兩個同名專案，需先確認是否重複建立，保留一個。
+- Supabase 管理金鑰已存入雲端環境「元智警衛巡邏」的 Network secrets（api.supabase.com），需在**新的工作階段**才會生效。
+- 下一步（由 Claude 執行）：以 Management API 執行 `supabase/schema.sql`、`seed.sql`（可略）、建立 Storage bucket、部署 admin／passkey／daily-report 三個 Edge Functions、設定 WEBAUTHN 相關 secrets、關閉公開註冊、建立第一位管理者、更新 `js/config.js` 的 SUPABASE_URL 與 anon key 後推送。
+
 ## 3. 未完成事項與下一步
 
 | 優先序 | 事項 | 負責 |
