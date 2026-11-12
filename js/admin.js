@@ -201,7 +201,7 @@ P.report = async main => {
   const runs = async () => {
     const rs = await api.listReportRuns();
     $('#runs').innerHTML = rs.length ? tbl(['寄送時間', '勤務日', '方式', '收件人', '結果'], rs.map(r => [dt(r.run_at), r.report_day, r.trigger === 'cron' ? '自動' : '手動',
-      (r.recipients || []).join('、'), r.status === 'sent' ? '已寄出' : `失敗：${r.error || ''}`])) : '<p class="empty card">尚無寄送紀錄。</p>';
+      (r.recipients || []).join('、'), r.status === 'sent' ? (r.error ? `已寄出，部分失敗：${r.error}` : '已寄出') : `失敗：${r.error || ''}`])) : '<p class="empty card">尚無寄送紀錄。</p>';
   };
   $('#f').onsubmit = e => { e.preventDefault(); preview().catch(err => toast(err.message, 'bad')); };
   $('#xlsx').onclick = async e => {
@@ -216,7 +216,12 @@ P.report = async main => {
   };
   $('#send').onclick = async e => {
     const btn = e.currentTarget; btn.disabled = true;
-    try { const r = await api.sendReportNow($('#day').value); toast(`已寄出 ${r.day} 日報表給 ${r.recipients.join('、')}`); runs(); }
+    try {
+      const r = await api.sendReportNow($('#day').value);
+      const fail = (r.failed || []).map(f => f.to).join('、');
+      toast(`已寄出 ${r.day} 日報表給 ${r.recipients.join('、')}${fail ? `；未寄出：${fail}（詳見寄送紀錄）` : ''}`, fail ? 'bad' : undefined);
+      runs();
+    }
     catch (err) { toast(err.message, 'bad'); }
     btn.disabled = false;
   };

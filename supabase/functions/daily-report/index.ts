@@ -70,7 +70,23 @@ async function sendMail(to: string[], subject: string, html: string, filename: s
     body: JSON.stringify({ from: Deno.env.get('REPORT_FROM') || '校園巡邏系統 <onboarding@resend.dev>', to, subject, html,
       attachments: [{ filename, content: toBase64(content) }] }),
   });
-  if (!res.ok) throw new Error(`寄信失敗：${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const raw = await res.text();
+    // 寄件網域未驗證時，Resend 只允許寄到註冊帳號的信箱
+    if (res.status === 403 && /verify a domain|testing emails/i.test(raw)) throw new Error('寄件網域尚未驗證，目前只能寄到 Resend 註冊信箱');
+    throw new Error(`寄信失敗：${res.status} ${raw.slice(0, 200)}`);
+  }
+}
+
+// 逐一寄給每位收件人：其中一位失敗（例如信箱錯誤、網域未驗證）不影響其他人收到
+async function sendEach(to: string[], subject: string, html: string, filename: string, content: ArrayBuffer) {
+  const sent: string[] = [], failed: { to: string; error: string }[] = [];
+  for (const [i, addr] of to.entries()) {
+    if (i) await new Promise(r => setTimeout(r, 600));   // 避免超過寄信服務的每秒請求上限
+    try { await sendMail([addr], subject, html, filename, content); sent.push(addr); }
+    catch (e) { failed.push({ to: addr, error: String((e as Error).message ?? e) }); }
+  }
+  return { sent, failed };
 }
 
 Deno.serve(async (req) => {
@@ -111,9 +127,11 @@ Deno.serve(async (req) => {
     const wb = await buildWorkbook(ExcelJS, data, org);
     const buf = await wb.xlsx.writeBuffer();
     const subject = `【巡查日報】${day}｜${s.patrols} 場、完成率 ${s.completion}、異常 ${s.abnormal} 件${s.sos ? `、SOS ${s.sos} 次` : ''}`;
-    await sendMail(recipients, subject, emailHtml(data, org), reportFileName(day), buf);
-    await db.from('report_runs').insert({ report_day: day, trigger, recipients, status: 'sent' });
-    return json({ sent: true, day, recipients });
+    const { sent, failed } = await sendEach(recipients, subject, emailHtml(data, org), reportFileName(day), buf);
+    const failMsg = failed.map(f => `${f.to}：${f.error}`).join('；');
+    if (!sent.length) throw new Error(failMsg);
+    await db.from('report_runs').insert({ report_day: day, trigger, recipients: sent, status: 'sent', error: failMsg || null });
+    return json({ sent: true, day, recipients: sent, failed });
   } catch (e) {
     const msg = String((e as Error).message ?? e);
     if (day) await db.from('report_runs').insert({ report_day: day, trigger, status: 'failed', error: msg });
